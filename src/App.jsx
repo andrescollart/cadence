@@ -23,7 +23,6 @@ import {
 } from './constants';
 
 // Components
-import ImportModal from './components/modals/ImportModal';
 import ExportModal from './components/modals/ExportModal';
 import TeamsSegmentsModal from './components/modals/TeamsSegmentsModal';
 import { TeamBadge, SegmentTags } from './components/badges';
@@ -132,7 +131,6 @@ export default function GanttChart() {
   const [showTeamsSegmentsManager, setShowTeamsSegmentsManager] = useState(false);
 
   // Import state
-  const [showLoadModal, setShowLoadModal] = useState(false);
   const [showJiraImportModal, setShowJiraImportModal] = useState(false);
   const [showPushToJiraModal, setShowPushToJiraModal] = useState(false);
 
@@ -301,7 +299,6 @@ export default function GanttChart() {
       }
 
       setTasks(newTasks);
-      setShowLoadModal(false);
 
       // Store JIRA import source for push-back functionality
       if (data.cloudId && data.projectKey) {
@@ -1048,13 +1045,6 @@ export default function GanttChart() {
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-gray-900">Gantt Chart</h1>
                 <button
-                  onClick={() => setShowLoadModal(true)}
-                  className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
-                  title="Import JSON data"
-                >
-                  📂 Import JSON
-                </button>
-                <button
                   onClick={() => setShowJiraImportModal(true)}
                   className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded text-blue-700"
                   title="Import from JIRA"
@@ -1300,7 +1290,7 @@ export default function GanttChart() {
             </div>
             <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 340px)' }}>
               {tasks.length === 0 ? (
-                <EmptyState onImport={() => setShowLoadModal(true)} />
+                <EmptyState onImport={() => setShowJiraImportModal(true)} />
               ) : visibleRows.map((row) => {
                 if (row.type === 'task') {
                   const task = row.data;
@@ -1657,14 +1647,6 @@ export default function GanttChart() {
           setShowWorkingDaysOnly={setShowWorkingDaysOnly}
           resourceData={resourceData}
         />
-
-        {/* Load JSON Modal */}
-        {showLoadModal && (
-          <ImportModal
-            onClose={() => setShowLoadModal(false)}
-            onImport={importFromJira}
-          />
-        )}
 
         {/* JIRA Direct Import Modal */}
         <JiraImportModal
