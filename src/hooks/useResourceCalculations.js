@@ -26,41 +26,50 @@ export default function useResourceCalculations({
       weekStart.setDate(weekStart.getDate() + 7);
     }
 
-    // Collect all work items (subtasks + parent tasks without subtasks)
+    // Collect all work items (leaf items - those without subtasks)
     const workItems = [];
+
+    // Recursive function to collect leaf work items
+    const collectLeafItems = (items, parentDates = {}) => {
+      items.forEach(item => {
+        const itemDates = {
+          startDate: item.startDate || parentDates.startDate,
+          endDate: item.endDate || parentDates.endDate
+        };
+
+        if (!item.subtasks || item.subtasks.length === 0) {
+          // Leaf item - use its effort
+          if (!filterTeam || item.team === filterTeam) {
+            workItems.push({
+              startDate: itemDates.startDate,
+              endDate: itemDates.endDate,
+              feEffortDays: item.feEffortDays || 0,
+              beEffortDays: item.beEffortDays || 0,
+              team: item.team
+            });
+          }
+        } else {
+          // Has subtasks - recurse into them
+          collectLeafItems(item.subtasks, itemDates);
+        }
+      });
+    };
+
+    // Helper to check if task or any nested subtask matches filter
+    const hasMatchingTeam = (item) => {
+      if (item.team === filterTeam) return true;
+      if (item.subtasks?.length > 0) {
+        return item.subtasks.some(st => hasMatchingTeam(st));
+      }
+      return false;
+    };
 
     // Apply team filter if active
     const tasksToProcess = filterTeam
-      ? tasks.filter(t => t.team === filterTeam || t.subtasks.some(st => st.team === filterTeam))
+      ? tasks.filter(t => hasMatchingTeam(t))
       : tasks;
 
-    tasksToProcess.forEach(task => {
-      if (task.subtasks.length === 0) {
-        // Parent task without subtasks - use its own effort
-        if (!filterTeam || task.team === filterTeam) {
-          workItems.push({
-            startDate: task.startDate,
-            endDate: task.endDate,
-            feEffortDays: task.feEffortDays || 0,
-            beEffortDays: task.beEffortDays || 0,
-            team: task.team
-          });
-        }
-      } else {
-        // Use subtasks
-        task.subtasks.forEach(st => {
-          if (!filterTeam || st.team === filterTeam) {
-            workItems.push({
-              startDate: st.startDate,
-              endDate: st.endDate,
-              feEffortDays: st.feEffortDays || 0,
-              beEffortDays: st.beEffortDays || 0,
-              team: st.team
-            });
-          }
-        });
-      }
-    });
+    collectLeafItems(tasksToProcess);
 
     // Calculate FTE for each week - by team
     return weeks.map(weekStartDate => {
@@ -146,37 +155,44 @@ export default function useResourceCalculations({
       teamTotals[team] = { feDays: 0, beDays: 0, peakFe: 0, peakBe: 0, overAllocatedWeeks: 0 };
     });
 
+    // Helper to check if item or any nested subtask matches filter
+    const hasMatchingTeam = (item) => {
+      if (item.team === filterTeam) return true;
+      if (item.subtasks?.length > 0) {
+        return item.subtasks.some(st => hasMatchingTeam(st));
+      }
+      return false;
+    };
+
     // Apply team filter
     const tasksToProcess = filterTeam
-      ? tasks.filter(t => t.team === filterTeam || t.subtasks.some(st => st.team === filterTeam))
+      ? tasks.filter(t => hasMatchingTeam(t))
       : tasks;
 
     let totalFeDays = 0;
     let totalBeDays = 0;
 
-    tasksToProcess.forEach(task => {
-      if (task.subtasks.length === 0) {
-        if (!filterTeam || task.team === filterTeam) {
-          totalFeDays += task.feEffortDays || 0;
-          totalBeDays += task.beEffortDays || 0;
-          if (task.team && teamTotals[task.team]) {
-            teamTotals[task.team].feDays += task.feEffortDays || 0;
-            teamTotals[task.team].beDays += task.beEffortDays || 0;
-          }
-        }
-      } else {
-        task.subtasks.forEach(st => {
-          if (!filterTeam || st.team === filterTeam) {
-            totalFeDays += st.feEffortDays || 0;
-            totalBeDays += st.beEffortDays || 0;
-            if (st.team && teamTotals[st.team]) {
-              teamTotals[st.team].feDays += st.feEffortDays || 0;
-              teamTotals[st.team].beDays += st.beEffortDays || 0;
+    // Recursive function to sum leaf item efforts
+    const sumLeafEfforts = (items) => {
+      items.forEach(item => {
+        if (!item.subtasks || item.subtasks.length === 0) {
+          // Leaf item
+          if (!filterTeam || item.team === filterTeam) {
+            totalFeDays += item.feEffortDays || 0;
+            totalBeDays += item.beEffortDays || 0;
+            if (item.team && teamTotals[item.team]) {
+              teamTotals[item.team].feDays += item.feEffortDays || 0;
+              teamTotals[item.team].beDays += item.beEffortDays || 0;
             }
           }
-        });
-      }
-    });
+        } else {
+          // Has subtasks - recurse
+          sumLeafEfforts(item.subtasks);
+        }
+      });
+    };
+
+    sumLeafEfforts(tasksToProcess);
 
     // Calculate peaks and over-allocation per team from resourceData
     Object.keys(teams).forEach(team => {

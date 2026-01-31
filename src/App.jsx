@@ -38,6 +38,8 @@ import { ResourcePlanningSection } from './components/resources';
 import Legend from './components/Legend';
 import EmptyState from './components/EmptyState';
 import { useResourceCalculations } from './hooks';
+import AuthButton from './components/auth/AuthButton';
+import JiraImportModal from './components/modals/JiraImportModal';
 
 const initialTasks = [];
 
@@ -130,6 +132,7 @@ export default function GanttChart() {
 
   // Import state
   const [showLoadModal, setShowLoadModal] = useState(false);
+  const [showJiraImportModal, setShowJiraImportModal] = useState(false);
 
   const chartRef = useRef(null);
   const chartContainerRef = useRef(null);
@@ -175,32 +178,41 @@ export default function GanttChart() {
         if (taskTeam) foundTeams.add(taskTeam);
         taskSegments.forEach(s => foundSegments.add(s));
 
-        // Build subtasks
-        const subtasks = (issue.subtasks || []).map(st => {
-          const stConfig = parseGanttConfig(st.description);
-          newOriginalDates[st.id] = {
-            startDate: st.startDate,
-            dueDate: st.endDate
-          };
+        // Recursive function to build subtasks (supports nested subtasks)
+        const buildSubtasks = (items, parentStartDate, parentEndDate) => {
+          return (items || []).map(st => {
+            const stConfig = parseGanttConfig(st.description);
+            newOriginalDates[st.id] = {
+              startDate: st.startDate,
+              dueDate: st.endDate
+            };
 
-          // Collect team/segments from subtask
-          const stTeam = stConfig?.team || st.team || null;
-          const stSegments = stConfig?.segments || st.segments || [];
-          if (stTeam) foundTeams.add(stTeam);
-          stSegments.forEach(s => foundSegments.add(s));
+            // Collect team/segments from subtask
+            const stTeam = stConfig?.team || st.team || null;
+            const stSegments = stConfig?.segments || st.segments || [];
+            if (stTeam) foundTeams.add(stTeam);
+            stSegments.forEach(s => foundSegments.add(s));
 
-          return {
-            id: st.id,
-            name: st.name,
-            status: st.status || 'To Do',
-            team: stTeam,
-            segments: stSegments,
-            startDate: st.startDate || issue.startDate,
-            endDate: st.endDate || issue.endDate,
-            feEffortDays: stConfig?.feEffortDays ?? st.feEffortDays ?? 0,
-            beEffortDays: stConfig?.beEffortDays ?? st.beEffortDays ?? 0,
-          };
-        });
+            const subtaskStartDate = st.startDate || parentStartDate;
+            const subtaskEndDate = st.endDate || parentEndDate;
+
+            return {
+              id: st.id,
+              name: st.name,
+              status: st.status || 'To Do',
+              team: stTeam,
+              segments: stSegments,
+              startDate: subtaskStartDate,
+              endDate: subtaskEndDate,
+              feEffortDays: stConfig?.feEffortDays ?? st.feEffortDays ?? 0,
+              beEffortDays: stConfig?.beEffortDays ?? st.beEffortDays ?? 0,
+              subtasks: buildSubtasks(st.subtasks, subtaskStartDate, subtaskEndDate),
+            };
+          });
+        };
+
+        // Build subtasks (now supports nesting)
+        const subtasks = buildSubtasks(issue.subtasks, issue.startDate, issue.endDate);
 
         return {
           id: issue.id,
@@ -317,7 +329,19 @@ export default function GanttChart() {
   };
 
   const expandAll = () => {
-    setExpandedTasks(new Set(tasks.filter(t => t.subtasks.length > 0).map(t => t.id)));
+    const idsToExpand = [];
+
+    const collectExpandableIds = (items) => {
+      items.forEach(item => {
+        if (item.subtasks?.length > 0) {
+          idsToExpand.push(item.id);
+          collectExpandableIds(item.subtasks);
+        }
+      });
+    };
+
+    collectExpandableIds(tasks);
+    setExpandedTasks(new Set(idsToExpand));
   };
 
   const collapseAll = () => {
@@ -342,17 +366,28 @@ export default function GanttChart() {
     }).filter(Boolean);
   }, [tasks, filterTeam, filterSegment]);
 
-  // Build flat list of visible rows
+  // Build flat list of visible rows (supports nested subtasks)
   const visibleRows = useMemo(() => {
     const rows = [];
+
+    // Recursive function to add subtasks at any depth
+    const addSubtasks = (subtasks, parent, depth = 1) => {
+      subtasks.forEach(subtask => {
+        const subtaskMatches = (!filterTeam || subtask.team === filterTeam) &&
+                               (!filterSegment || subtask.segments?.includes(filterSegment));
+        rows.push({ type: 'subtask', data: subtask, parent, depth, _dimmed: !subtaskMatches });
+
+        // Recursively add nested subtasks if expanded
+        if (expandedTasks.has(subtask.id) && subtask.subtasks?.length > 0) {
+          addSubtasks(subtask.subtasks, subtask, depth + 1);
+        }
+      });
+    };
+
     filteredTasks.forEach(task => {
       rows.push({ type: 'task', data: task });
       if (expandedTasks.has(task.id)) {
-        task.subtasks.forEach(subtask => {
-          const subtaskMatches = (!filterTeam || subtask.team === filterTeam) &&
-                                 (!filterSegment || subtask.segments?.includes(filterSegment));
-          rows.push({ type: 'subtask', data: subtask, parent: task, _dimmed: !subtaskMatches });
-        });
+        addSubtasks(task.subtasks, task, 1);
       }
     });
     return rows;
@@ -551,26 +586,28 @@ export default function GanttChart() {
 
       setTimelineDrawing(prev => ({ ...prev, currentDay }));
 
-      // Handle subtask timeline drawing
+      // Handle subtask timeline drawing (supports nested subtasks)
       if (timelineDrawing.subtaskId) {
-        setTasks(prev => prev.map(task => {
-          if (task.id !== timelineDrawing.parentId) return task;
+        const startDay = Math.min(timelineDrawing.startDay, currentDay);
+        const endDay = Math.max(timelineDrawing.startDay, currentDay);
 
-          const startDay = Math.min(timelineDrawing.startDay, currentDay);
-          const endDay = Math.max(timelineDrawing.startDay, currentDay);
+        // Use deep update for nested subtasks
+        const updateInSubtasks = (subtasks) => {
+          return subtasks.map(st => {
+            if (st.id === timelineDrawing.subtaskId) {
+              return { ...st, startDate: dayToDate(startDay), endDate: dayToDate(endDay) };
+            }
+            if (st.subtasks?.length > 0) {
+              return { ...st, subtasks: updateInSubtasks(st.subtasks) };
+            }
+            return st;
+          });
+        };
 
-          return {
-            ...task,
-            subtasks: task.subtasks.map(st => {
-              if (st.id !== timelineDrawing.subtaskId) return st;
-              return {
-                ...st,
-                startDate: dayToDate(startDay),
-                endDate: dayToDate(endDay)
-              };
-            })
-          };
-        }));
+        setTasks(prev => prev.map(task => ({
+          ...task,
+          subtasks: updateInSubtasks(task.subtasks)
+        })));
       } else {
         // Handle task timeline drawing
         setTasks(prev => prev.map(task => {
@@ -593,46 +630,54 @@ export default function GanttChart() {
 
     const dayDiff = Math.round((currentX - dragState.startX) / DAY_WIDTH);
 
-    // Handle subtask dragging
+    // Handle subtask dragging (supports nested subtasks)
     if (dragState.isSubtask) {
-      setTasks(prev => prev.map(task => {
-        if (task.id !== dragState.parentId) return task;
+      const originalStart = new Date(dragState.originalStart);
+      const originalEnd = new Date(dragState.originalEnd);
 
-        return {
-          ...task,
-          subtasks: task.subtasks.map(st => {
-            if (st.id !== dragState.taskId) return st;
+      let updates = {};
+      if (dragState.type === 'move') {
+        const newStart = new Date(originalStart);
+        newStart.setDate(newStart.getDate() + dayDiff);
+        const newEnd = new Date(originalEnd);
+        newEnd.setDate(newEnd.getDate() + dayDiff);
+        updates = {
+          startDate: newStart.toISOString().split('T')[0],
+          endDate: newEnd.toISOString().split('T')[0]
+        };
+      } else if (dragState.type === 'start') {
+        const newStart = new Date(originalStart);
+        newStart.setDate(newStart.getDate() + dayDiff);
+        if (newStart < originalEnd) {
+          updates = { startDate: newStart.toISOString().split('T')[0] };
+        }
+      } else if (dragState.type === 'end') {
+        const newEnd = new Date(originalEnd);
+        newEnd.setDate(newEnd.getDate() + dayDiff);
+        if (newEnd > originalStart) {
+          updates = { endDate: newEnd.toISOString().split('T')[0] };
+        }
+      }
 
-            const originalStart = new Date(dragState.originalStart);
-            const originalEnd = new Date(dragState.originalEnd);
-
-            if (dragState.type === 'move') {
-              const newStart = new Date(originalStart);
-              newStart.setDate(newStart.getDate() + dayDiff);
-              const newEnd = new Date(originalEnd);
-              newEnd.setDate(newEnd.getDate() + dayDiff);
-              return {
-                ...st,
-                startDate: newStart.toISOString().split('T')[0],
-                endDate: newEnd.toISOString().split('T')[0]
-              };
-            } else if (dragState.type === 'start') {
-              const newStart = new Date(originalStart);
-              newStart.setDate(newStart.getDate() + dayDiff);
-              if (newStart < originalEnd) {
-                return { ...st, startDate: newStart.toISOString().split('T')[0] };
-              }
-            } else if (dragState.type === 'end') {
-              const newEnd = new Date(originalEnd);
-              newEnd.setDate(newEnd.getDate() + dayDiff);
-              if (newEnd > originalStart) {
-                return { ...st, endDate: newEnd.toISOString().split('T')[0] };
-              }
+      if (Object.keys(updates).length > 0) {
+        // Use deep update for nested subtasks
+        const updateInSubtasks = (subtasks) => {
+          return subtasks.map(st => {
+            if (st.id === dragState.taskId) {
+              return { ...st, ...updates };
+            }
+            if (st.subtasks?.length > 0) {
+              return { ...st, subtasks: updateInSubtasks(st.subtasks) };
             }
             return st;
-          })
+          });
         };
-      }));
+
+        setTasks(prev => prev.map(task => ({
+          ...task,
+          subtasks: updateInSubtasks(task.subtasks)
+        })));
+      }
       return;
     }
 
@@ -734,6 +779,26 @@ export default function GanttChart() {
       }
       return t;
     }));
+  };
+
+  // Deep update for nested subtasks - finds subtask at any depth
+  const updateSubtaskDeep = (subtaskId, updates) => {
+    const updateInSubtasks = (subtasks) => {
+      return subtasks.map(st => {
+        if (st.id === subtaskId) {
+          return { ...st, ...updates };
+        }
+        if (st.subtasks?.length > 0) {
+          return { ...st, subtasks: updateInSubtasks(st.subtasks) };
+        }
+        return st;
+      });
+    };
+
+    setTasks(prev => prev.map(t => ({
+      ...t,
+      subtasks: updateInSubtasks(t.subtasks)
+    })));
   };
 
   const getBarColor = (task) => {
@@ -939,11 +1004,19 @@ export default function GanttChart() {
                 <button
                   onClick={() => setShowLoadModal(true)}
                   className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
-                  title="Import data"
+                  title="Import JSON data"
                 >
-                  📂 Import
+                  📂 Import JSON
+                </button>
+                <button
+                  onClick={() => setShowJiraImportModal(true)}
+                  className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded text-blue-700"
+                  title="Import from JIRA"
+                >
+                  🔗 JIRA Import
                 </button>
               </div>
+              <AuthButton />
               <p className="text-gray-500 mt-1">Interactive Schedule & Dependency Manager</p>
             </div>
             <div className="flex gap-2 items-center flex-wrap">
@@ -1227,6 +1300,10 @@ export default function GanttChart() {
                   const subtask = row.data;
                   const parent = row.parent;
                   const isDimmed = row._dimmed;
+                  const depth = row.depth || 1;
+                  const hasNestedSubtasks = subtask.subtasks?.length > 0;
+                  const isExpanded = expandedTasks.has(subtask.id);
+                  const indentPx = 28 + (depth - 1) * 20; // Base indent + depth-based indent
 
                   return (
                     <div
@@ -1234,7 +1311,20 @@ export default function GanttChart() {
                       className={`px-3 border-b bg-gray-50/50 hover:bg-gray-100/50 ${isDimmed ? 'opacity-40' : ''}`}
                       style={{ height: SUBTASK_ROW_HEIGHT, display: 'flex', alignItems: 'center' }}
                     >
-                      <div className="flex items-center gap-1.5 w-full pl-7">
+                      <div className="flex items-center gap-1.5 w-full" style={{ paddingLeft: indentPx }}>
+                        {hasNestedSubtasks ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpanded(subtask.id);
+                            }}
+                            className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded text-xs flex-shrink-0"
+                          >
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                        ) : (
+                          <div className="w-4 flex-shrink-0" />
+                        )}
                         <div
                           className="w-2 h-2 rounded-full flex-shrink-0"
                           style={{ backgroundColor: colorByTeam
@@ -1246,19 +1336,19 @@ export default function GanttChart() {
                         </div>
                         <InlineTeamDropdown
                           value={subtask.team}
-                          onChange={(team) => updateSubtask(parent.id, subtask.id, { team })}
+                          onChange={(team) => updateSubtaskDeep(subtask.id, { team })}
                           teams={teams}
                         />
                         <InlineSegmentEditor
                           value={subtask.segments || []}
-                          onChange={(segs) => updateSubtask(parent.id, subtask.id, { segments: segs })}
+                          onChange={(segs) => updateSubtaskDeep(subtask.id, { segments: segs })}
                           segments={segments}
                         />
                         <CompactEffortInput
                           feValue={subtask.feEffortDays}
                           beValue={subtask.beEffortDays}
-                          onFEChange={(val) => updateSubtask(parent.id, subtask.id, { feEffortDays: val })}
-                          onBEChange={(val) => updateSubtask(parent.id, subtask.id, { beEffortDays: val })}
+                          onFEChange={(val) => updateSubtaskDeep(subtask.id, { feEffortDays: val })}
+                          onBEChange={(val) => updateSubtaskDeep(subtask.id, { beEffortDays: val })}
                         />
                         <span className={`px-1.5 py-0.5 text-xs rounded ${STATUS_COLORS[subtask.status]}`}>
                           {subtask.status}
@@ -1498,13 +1588,20 @@ export default function GanttChart() {
           resourceData={resourceData}
         />
 
-        {/* Load from JIRA Modal */}
+        {/* Load JSON Modal */}
         {showLoadModal && (
           <ImportModal
             onClose={() => setShowLoadModal(false)}
             onImport={importFromJira}
           />
         )}
+
+        {/* JIRA Direct Import Modal */}
+        <JiraImportModal
+          isOpen={showJiraImportModal}
+          onClose={() => setShowJiraImportModal(false)}
+          onImport={importFromJira}
+        />
 
         {/* Teams & Segments Manager Modal */}
         {showTeamsSegmentsManager && (
