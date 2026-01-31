@@ -134,6 +134,18 @@ export default function GanttChart() {
   const chartRef = useRef(null);
   const chartContainerRef = useRef(null);
 
+  // Color palette for dynamically created teams/segments
+  const TEAM_COLORS = [
+    { color: '#3b82f6', bg: 'bg-blue-100', text: 'text-blue-700' },
+    { color: '#8b5cf6', bg: 'bg-purple-100', text: 'text-purple-700' },
+    { color: '#10b981', bg: 'bg-emerald-100', text: 'text-emerald-700' },
+    { color: '#f59e0b', bg: 'bg-amber-100', text: 'text-amber-700' },
+    { color: '#ef4444', bg: 'bg-red-100', text: 'text-red-700' },
+    { color: '#06b6d4', bg: 'bg-cyan-100', text: 'text-cyan-700' },
+    { color: '#ec4899', bg: 'bg-pink-100', text: 'text-pink-700' },
+    { color: '#84cc16', bg: 'bg-lime-100', text: 'text-lime-700' },
+  ];
+
   // Import tasks from JIRA JSON data
   const importFromJira = useCallback((jiraData) => {
     try {
@@ -141,6 +153,10 @@ export default function GanttChart() {
 
       // Track original dates for sync comparison
       const newOriginalDates = {};
+
+      // Collect all unique teams and segments from the data
+      const foundTeams = new Set();
+      const foundSegments = new Set();
 
       // Convert JIRA issues to Gantt tasks
       const newTasks = data.tasks.map((issue, index) => {
@@ -153,6 +169,12 @@ export default function GanttChart() {
           dueDate: issue.endDate
         };
 
+        // Collect team/segments from task
+        const taskTeam = config?.team || issue.team || null;
+        const taskSegments = config?.segments || issue.segments || [];
+        if (taskTeam) foundTeams.add(taskTeam);
+        taskSegments.forEach(s => foundSegments.add(s));
+
         // Build subtasks
         const subtasks = (issue.subtasks || []).map(st => {
           const stConfig = parseGanttConfig(st.description);
@@ -160,12 +182,19 @@ export default function GanttChart() {
             startDate: st.startDate,
             dueDate: st.endDate
           };
+
+          // Collect team/segments from subtask
+          const stTeam = stConfig?.team || st.team || null;
+          const stSegments = stConfig?.segments || st.segments || [];
+          if (stTeam) foundTeams.add(stTeam);
+          stSegments.forEach(s => foundSegments.add(s));
+
           return {
             id: st.id,
             name: st.name,
             status: st.status || 'To Do',
-            team: stConfig?.team || st.team || null,
-            segments: stConfig?.segments || st.segments || [],
+            team: stTeam,
+            segments: stSegments,
             startDate: st.startDate || issue.startDate,
             endDate: st.endDate || issue.endDate,
             feEffortDays: stConfig?.feEffortDays ?? st.feEffortDays ?? 0,
@@ -183,13 +212,53 @@ export default function GanttChart() {
           dependencies: issue.dependencies || [],
           description: issue.description || '',
           color: PHASE_COLORS[index % PHASE_COLORS.length],
-          team: config?.team || issue.team || null,
-          segments: config?.segments || issue.segments || [],
+          team: taskTeam,
+          segments: taskSegments,
           feEffortDays: config?.feEffortDays ?? issue.feEffortDays ?? 0,
           beEffortDays: config?.beEffortDays ?? issue.beEffortDays ?? 0,
           subtasks,
         };
       });
+
+      // Update teams state with discovered teams (replace defaults with imported ones)
+      if (foundTeams.size > 0) {
+        const newTeams = {};
+        let colorIndex = 0;
+        foundTeams.forEach(teamName => {
+          const colorSet = TEAM_COLORS[colorIndex % TEAM_COLORS.length];
+          newTeams[teamName] = {
+            name: teamName,
+            ...colorSet
+          };
+          colorIndex++;
+        });
+        setTeams(newTeams);
+
+        // Update capacity config for new teams
+        const newCapacities = {};
+        foundTeams.forEach(teamName => {
+          newCapacities[teamName] = { fe: 1, be: 1 };
+        });
+        setCapacityConfig(prev => ({
+          ...prev,
+          teamCapacities: newCapacities
+        }));
+      }
+
+      // Update segments state with discovered segments (replace defaults with imported ones)
+      if (foundSegments.size > 0) {
+        const newSegments = {};
+        let colorIndex = 0;
+        foundSegments.forEach(segName => {
+          const colorSet = TEAM_COLORS[colorIndex % TEAM_COLORS.length];
+          newSegments[segName] = {
+            name: segName,
+            ...colorSet
+          };
+          colorIndex++;
+        });
+        setSegments(newSegments);
+      }
 
       setTasks(newTasks);
       setShowLoadModal(false);
@@ -1009,7 +1078,7 @@ export default function GanttChart() {
                 onChange={(e) => setFilterSegment(e.target.value || null)}
                 className="text-sm border rounded px-2 py-1"
               >
-                <option value="">All Segments</option>
+                <option value="">All Customer Segments</option>
                 {Object.keys(segments).map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
@@ -1022,11 +1091,11 @@ export default function GanttChart() {
               </button>
             )}
 
-            {/* Manage Teams/Segments */}
+            {/* Manage Teams/Customer Segments */}
             <button
               onClick={() => setShowTeamsSegmentsManager(true)}
               className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
-              title="Manage Teams & Segments"
+              title="Manage Teams & Customer Segments"
             >
               ⚙️
             </button>

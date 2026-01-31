@@ -44,7 +44,7 @@ export default function TeamsSegmentsModal({
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[80vh] overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Manage Teams & Segments</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Manage Teams & Customer Segments</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
         </div>
         <div className="p-6 overflow-auto max-h-[60vh]">
@@ -83,9 +83,9 @@ export default function TeamsSegmentsModal({
               </button>
             </div>
 
-            {/* Segments Column */}
+            {/* Customer Segments Column */}
             <div>
-              <h3 className="font-medium text-gray-900 mb-3">Segments</h3>
+              <h3 className="font-medium text-gray-900 mb-3">Customer Segments</h3>
               <div className="space-y-2">
                 {Object.entries(segments).map(([key, seg]) => {
                   const usage = getSegmentUsageCount(key);
@@ -113,7 +113,7 @@ export default function TeamsSegmentsModal({
                 onClick={handleAddSegment}
                 className="mt-3 w-full px-3 py-2 border-2 border-dashed border-gray-300 rounded text-sm text-gray-500 hover:border-gray-400 hover:text-gray-600"
               >
-                + Add Segment
+                + Add Customer Segment
               </button>
             </div>
           </div>

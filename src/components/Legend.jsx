@@ -13,7 +13,7 @@ export default function Legend({ teams, segments }) {
           ))}
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-gray-500 font-medium">Segments:</span>
+          <span className="text-gray-500 font-medium">Customer Segments:</span>
           {Object.entries(segments).map(([key, seg]) => (
             <div key={key} className="flex items-center gap-1">
               <span
