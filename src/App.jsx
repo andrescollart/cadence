@@ -1,549 +1,45 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
 
-// Utility: Calculate working days between two dates (excludes weekends)
-function getWorkingDays(startDate, endDate) {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  let count = 0;
-  const current = new Date(start);
-  while (current <= end) {
-    const day = current.getDay();
-    if (day !== 0 && day !== 6) count++;
-    current.setDate(current.getDate() + 1);
-  }
-  return Math.max(count, 1);
-}
+// Utils
+import {
+  getWorkingDays,
+  getTotalWorkingDays,
+  workingDayOffsetToDate,
+  dateToWorkingDayOffset,
+} from './utils/dateUtils';
+import { parseGanttConfig } from './utils/ganttConfig';
 
-// Utility: Get Monday of the week for a given date
-function getWeekStart(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  return d.toISOString().split('T')[0];
-}
+// Constants
+import {
+  PHASE_COLORS,
+  DEFAULT_TEAMS,
+  DEFAULT_SEGMENTS,
+  ROW_HEIGHT,
+  SUBTASK_ROW_HEIGHT,
+  HEADER_HEIGHT,
+  ZOOM_LEVELS,
+  STATUS_COLORS,
+} from './constants';
 
-// Utility: Check if a date range overlaps with a week
-function rangeOverlapsWeek(startDate, endDate, weekStart) {
-  const rangeStart = new Date(startDate);
-  const rangeEnd = new Date(endDate);
-  const weekStartDate = new Date(weekStart);
-  const weekEndDate = new Date(weekStart);
-  weekEndDate.setDate(weekEndDate.getDate() + 6);
-  return rangeStart <= weekEndDate && rangeEnd >= weekStartDate;
-}
-
-// Utility: Check if a date is a working day (M-F)
-function isWorkingDay(date) {
-  const day = date.getDay();
-  return day !== 0 && day !== 6;
-}
-
-// Utility: Get total working days between viewStart and viewEnd
-function getTotalWorkingDays(viewStart, viewEnd) {
-  let count = 0;
-  const current = new Date(viewStart);
-  while (current < viewEnd) {
-    if (isWorkingDay(current)) count++;
-    current.setDate(current.getDate() + 1);
-  }
-  return count;
-}
-
-// Utility: Convert working day offset to actual date
-function workingDayOffsetToDate(viewStart, offset) {
-  const date = new Date(viewStart);
-  let workingDaysCount = 0;
-  while (workingDaysCount < offset) {
-    date.setDate(date.getDate() + 1);
-    if (isWorkingDay(date)) workingDaysCount++;
-  }
-  // Ensure we land on a working day
-  while (!isWorkingDay(date)) {
-    date.setDate(date.getDate() + 1);
-  }
-  return date;
-}
-
-// Utility: Convert actual date to working day offset from viewStart
-function dateToWorkingDayOffset(viewStart, targetDate) {
-  const target = new Date(targetDate);
-  const start = new Date(viewStart);
-  let offset = 0;
-  const current = new Date(start);
-  while (current < target) {
-    if (isWorkingDay(current)) offset++;
-    current.setDate(current.getDate() + 1);
-  }
-  return offset;
-}
-
-// Parse GANTT_CONFIG from issue description
-function parseGanttConfig(description) {
-  if (!description) return null;
-  const match = description.match(/`GANTT_CONFIG:\s*(\{[^`]+\})`/);
-  if (match) {
-    try {
-      return JSON.parse(match[1]);
-    } catch (e) {
-      console.warn('Failed to parse GANTT_CONFIG:', e);
-    }
-  }
-  return null;
-}
-
-// Generate description with GANTT_CONFIG appended
-function appendGanttConfig(description, config) {
-  // Remove existing GANTT_CONFIG if present
-  const cleanDesc = (description || '').replace(/\n*-{3,}\n*`GANTT_CONFIG:[^`]+`\s*$/, '').trim();
-  const configJson = JSON.stringify(config);
-  return `${cleanDesc}\n\n----\n\n\`GANTT_CONFIG: ${configJson}\``;
-}
-
-// Phase colors for auto-assignment
-const PHASE_COLORS = [
-  '#3b82f6', // blue
-  '#8b5cf6', // purple
-  '#ec4899', // pink
-  '#f59e0b', // amber
-  '#10b981', // emerald
-  '#ef4444', // red
-  '#06b6d4', // cyan
-];
-
-const DEFAULT_TEAMS = {
-  Engineering: { name: 'Engineering', color: '#3b82f6', bg: 'bg-blue-100', text: 'text-blue-700' },
-  Design: { name: 'Design', color: '#8b5cf6', bg: 'bg-purple-100', text: 'text-purple-700' },
-  Product: { name: 'Product', color: '#10b981', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-};
-
-const DEFAULT_SEGMENTS = {
-  'Core': { name: 'Core', color: '#3b82f6', bg: 'bg-blue-100', text: 'text-blue-700' },
-  'Platform': { name: 'Platform', color: '#8b5cf6', bg: 'bg-purple-100', text: 'text-purple-700' },
-};
+// Components
+import ImportModal from './components/modals/ImportModal';
+import ExportModal from './components/modals/ExportModal';
+import TeamsSegmentsModal from './components/modals/TeamsSegmentsModal';
+import { TeamBadge, SegmentTags } from './components/badges';
+import {
+  SegmentSelect,
+  SubtaskSegmentSelect,
+  InlineTeamDropdown,
+  InlineSegmentEditor,
+  CompactEffortInput,
+} from './components/inputs';
+import { ResourcePlanningSection } from './components/resources';
+import Legend from './components/Legend';
+import EmptyState from './components/EmptyState';
+import { useResourceCalculations } from './hooks';
 
 const initialTasks = [];
-
-const ROW_HEIGHT = 48;
-const SUBTASK_ROW_HEIGHT = 36;
-const HEADER_HEIGHT = 60;
-
-const ZOOM_LEVELS = [
-  { label: '1W', dayWidth: 56, monthsToShow: 4 },
-  { label: '2W', dayWidth: 42, monthsToShow: 5 },
-  { label: '1M', dayWidth: 28, monthsToShow: 7 },
-  { label: '2M', dayWidth: 14, monthsToShow: 9 },
-  { label: 'Q', dayWidth: 8, monthsToShow: 12 },
-];
-
-// Team Badge Component
-function TeamBadge({ team, teams, size = 'sm' }) {
-  const teamsData = teams || DEFAULT_TEAMS;
-  if (!team || !teamsData[team]) return null;
-  const t = teamsData[team];
-  const sizeClasses = size === 'sm' ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-1 text-sm';
-  return (
-    <span className={`${t.bg} ${t.text} ${sizeClasses} rounded font-medium`}>
-      {t.name}
-    </span>
-  );
-}
-
-// Segment Tags Component - outlined style to differentiate from team badges
-function SegmentTags({ segments, segmentsData, size = 'sm' }) {
-  const segsData = segmentsData || DEFAULT_SEGMENTS;
-  if (!segments || segments.length === 0) return null;
-  const sizeClasses = size === 'sm' ? 'px-1 py-0.5 text-xs' : 'px-1.5 py-0.5 text-xs';
-  return (
-    <div className="flex flex-wrap gap-1">
-      {segments.map(seg => {
-        const s = segsData[seg];
-        if (!s) return null;
-        return (
-          <span
-            key={seg}
-            className={`${sizeClasses} rounded border bg-white`}
-            style={{ borderColor: s.color, color: s.color }}
-          >
-            {s.name}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-// Multi-select dropdown for segments
-function SegmentSelect({ value, onChange, segments }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  const segsData = segments || DEFAULT_SEGMENTS;
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const toggle = (seg) => {
-    if (value.includes(seg)) {
-      onChange(value.filter(s => s !== seg));
-    } else {
-      onChange([...value, seg]);
-    }
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full px-3 py-2 border rounded-lg text-left text-sm flex items-center justify-between bg-white"
-      >
-        <span className="truncate">
-          {value.length === 0 ? 'Select segments...' : value.join(', ')}
-        </span>
-        <span className="ml-2">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="absolute z-50 mt-1 w-full bg-white border rounded-lg shadow-lg">
-          {Object.keys(segsData).map(seg => (
-            <label key={seg} className="flex items-center px-3 py-2 hover:bg-gray-50 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={value.includes(seg)}
-                onChange={() => toggle(seg)}
-                className="mr-2"
-              />
-              <span className={`${segsData[seg].bg} ${segsData[seg].text} px-1.5 py-0.5 rounded text-xs`}>
-                {seg}
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Compact multi-select for subtask segments (table-friendly)
-function SubtaskSegmentSelect({ value, onChange, segments }) {
-  const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
-  const ref = useRef(null);
-  const segsData = segments || DEFAULT_SEGMENTS;
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const toggle = (seg) => {
-    if (value.includes(seg)) {
-      onChange(value.filter(s => s !== seg));
-    } else {
-      onChange([...value, seg]);
-    }
-  };
-
-  const handleOpen = () => {
-    if (!open && ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 150);
-    }
-    setOpen(!open);
-  };
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={handleOpen}
-        className="w-full px-1 py-0.5 border rounded text-xs text-left flex items-center justify-between bg-white min-h-[24px]"
-      >
-        {value.length === 0 ? (
-          <span className="text-gray-400">—</span>
-        ) : (
-          <div className="flex flex-wrap gap-0.5">
-            {value.map(seg => {
-              const s = segsData[seg];
-              return s ? (
-                <span
-                  key={seg}
-                  className="px-1 rounded border text-[10px]"
-                  style={{ borderColor: s.color, color: s.color }}
-                >
-                  {s.name}
-                </span>
-              ) : null;
-            })}
-          </div>
-        )}
-        <span className="ml-1 text-gray-400">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className={`absolute z-50 w-32 bg-white border rounded shadow-lg ${openUpward ? 'bottom-full mb-1' : 'top-full mt-1'}`}>
-          {Object.keys(segsData).map(seg => (
-            <label key={seg} className="flex items-center px-2 py-1 hover:bg-gray-50 cursor-pointer text-xs">
-              <input
-                type="checkbox"
-                checked={value.includes(seg)}
-                onChange={() => toggle(seg)}
-                className="mr-1.5 h-3 w-3"
-              />
-              <span
-                className="px-1 rounded border"
-                style={{ borderColor: segsData[seg].color, color: segsData[seg].color }}
-              >
-                {seg}
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Inline Team Dropdown - clickable team badge that opens a dropdown
-function InlineTeamDropdown({ value, onChange, teams }) {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0, openUpward: false });
-  const ref = useRef(null);
-  const dropdownRef = useRef(null);
-  const teamsData = teams || DEFAULT_TEAMS;
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      // Check if click is inside the trigger button
-      if (ref.current && ref.current.contains(e.target)) return;
-      // Check if click is inside the dropdown (if it exists)
-      if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
-      // Otherwise close
-      setOpen(false);
-    };
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [open]);
-
-  const handleOpen = (e) => {
-    e.stopPropagation();
-    if (!open && ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const openUpward = spaceBelow < 180;
-      setPosition({
-        top: openUpward ? rect.top : rect.bottom + 2,
-        left: rect.left,
-        openUpward
-      });
-    }
-    setOpen(!open);
-  };
-
-  const handleSelect = (e, teamKey) => {
-    e.stopPropagation();
-    onChange(teamKey);
-    setOpen(false);
-  };
-
-  const currentTeam = value && teamsData[value] ? teamsData[value] : null;
-
-  return (
-    <div ref={ref} className="relative inline-block" onClick={(e) => e.stopPropagation()}>
-      <button
-        onClick={handleOpen}
-        className={`${currentTeam ? `${currentTeam.bg} ${currentTeam.text}` : 'bg-gray-100 text-gray-500'} px-1.5 py-0.5 text-xs rounded font-medium cursor-pointer hover:opacity-80 transition-opacity`}
-      >
-        {currentTeam ? currentTeam.name : 'Team'}
-      </button>
-      {open && ReactDOM.createPortal(
-        <div
-          ref={dropdownRef}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="fixed z-50 bg-white border rounded-lg shadow-lg py-1 min-w-[100px]"
-          style={{
-            top: position.openUpward ? 'auto' : position.top,
-            bottom: position.openUpward ? window.innerHeight - position.top + 2 : 'auto',
-            left: position.left
-          }}
-        >
-          <button
-            onClick={(e) => handleSelect(e, null)}
-            className="w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 text-gray-400"
-          >
-            Unassigned
-          </button>
-          {Object.entries(teamsData).map(([key, team]) => (
-            <button
-              key={key}
-              onClick={(e) => handleSelect(e, key)}
-              className={`w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 flex items-center gap-2 ${value === key ? 'bg-gray-50' : ''}`}
-            >
-              <span className={`${team.bg} ${team.text} px-1.5 py-0.5 rounded font-medium`}>
-                {team.name}
-              </span>
-            </button>
-          ))}
-        </div>,
-        document.body
-      )}
-    </div>
-  );
-}
-
-// Inline Segment Editor - segments with remove buttons and add dropdown
-function InlineSegmentEditor({ value, onChange, segments }) {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0, openUpward: false });
-  const ref = useRef(null);
-  const dropdownRef = useRef(null);
-  const segsData = segments || DEFAULT_SEGMENTS;
-
-  useEffect(() => {
-    const handleClickOutside = (e) => {
-      // Check if click is inside the trigger container
-      if (ref.current && ref.current.contains(e.target)) return;
-      // Check if click is inside the dropdown (if it exists)
-      if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
-      // Otherwise close
-      setOpen(false);
-    };
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [open]);
-
-  const handleOpenAdd = (e) => {
-    e.stopPropagation();
-    if (!open && ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const openUpward = spaceBelow < 200;
-      setPosition({
-        top: openUpward ? rect.top : rect.bottom + 2,
-        left: rect.left,
-        openUpward
-      });
-    }
-    setOpen(!open);
-  };
-
-  const handleRemove = (e, seg) => {
-    e.stopPropagation();
-    onChange(value.filter(s => s !== seg));
-  };
-
-  const handleAdd = (e, seg) => {
-    e.stopPropagation();
-    if (!value.includes(seg)) {
-      onChange([...value, seg]);
-    }
-    setOpen(false);
-  };
-
-  const availableSegments = Object.keys(segsData).filter(seg => !value.includes(seg));
-
-  return (
-    <div ref={ref} className="flex items-center gap-1 flex-wrap" onClick={(e) => e.stopPropagation()}>
-      {value.map(seg => {
-        const s = segsData[seg];
-        if (!s) return null;
-        return (
-          <span
-            key={seg}
-            className="inline-flex items-center gap-0.5 px-1 py-0.5 text-xs rounded border bg-white group"
-            style={{ borderColor: s.color, color: s.color }}
-          >
-            {s.name}
-            <button
-              onClick={(e) => handleRemove(e, seg)}
-              className="ml-0.5 hover:bg-gray-100 rounded px-0.5 opacity-60 hover:opacity-100"
-            >
-              ×
-            </button>
-          </span>
-        );
-      })}
-      <button
-        onClick={handleOpenAdd}
-        className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded text-sm"
-        title="Add segment"
-      >
-        +
-      </button>
-      {open && availableSegments.length > 0 && ReactDOM.createPortal(
-        <div
-          ref={dropdownRef}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="fixed z-50 bg-white border rounded-lg shadow-lg py-1 min-w-[120px]"
-          style={{
-            top: position.openUpward ? 'auto' : position.top,
-            bottom: position.openUpward ? window.innerHeight - position.top + 2 : 'auto',
-            left: position.left
-          }}
-        >
-          {availableSegments.map(seg => {
-            const s = segsData[seg];
-            return (
-              <button
-                key={seg}
-                onClick={(e) => handleAdd(e, seg)}
-                className="w-full px-3 py-1.5 text-left text-xs hover:bg-gray-50 flex items-center gap-2"
-              >
-                <span
-                  className="px-1.5 py-0.5 rounded border"
-                  style={{ borderColor: s.color, color: s.color }}
-                >
-                  {s.name}
-                </span>
-              </button>
-            );
-          })}
-        </div>,
-        document.body
-      )}
-    </div>
-  );
-}
-
-// Compact Effort Input - dual FE/BE inputs
-function CompactEffortInput({ feValue, beValue, onFEChange, onBEChange }) {
-  return (
-    <div className="flex items-center gap-1">
-      <input
-        type="number"
-        min="0"
-        step="0.5"
-        value={feValue || 0}
-        onChange={(e) => onFEChange(parseFloat(e.target.value) || 0)}
-        onClick={(e) => e.stopPropagation()}
-        className="w-10 px-1 py-0.5 text-xs border rounded text-center"
-        title="FE Days"
-      />
-      <span className="text-gray-300">/</span>
-      <input
-        type="number"
-        min="0"
-        step="0.5"
-        value={beValue || 0}
-        onChange={(e) => onBEChange(parseFloat(e.target.value) || 0)}
-        onClick={(e) => e.stopPropagation()}
-        className="w-10 px-1 py-0.5 text-xs border rounded text-center"
-        title="BE Days"
-      />
-    </div>
-  );
-}
 
 export default function GanttChart() {
   const [tasks, setTasks] = useState(initialTasks);
@@ -611,7 +107,6 @@ export default function GanttChart() {
   const [filterSegment, setFilterSegment] = useState(null);
   const [colorByTeam, setColorByTeam] = useState(true);
   const [showSyncModal, setShowSyncModal] = useState(false);
-  const [syncOutput, setSyncOutput] = useState(null);
 
   // Capacity planning state - Team-based pools
   const [showCapacitySettings, setShowCapacitySettings] = useState(false);
@@ -635,7 +130,6 @@ export default function GanttChart() {
 
   // Import state
   const [showLoadModal, setShowLoadModal] = useState(false);
-  const [jiraImportData, setJiraImportData] = useState('');
 
   const chartRef = useRef(null);
   const chartContainerRef = useRef(null);
@@ -699,7 +193,6 @@ export default function GanttChart() {
 
       setTasks(newTasks);
       setShowLoadModal(false);
-      setJiraImportData('');
 
       // Auto-adjust view to show the data
       if (newTasks.length > 0) {
@@ -809,198 +302,16 @@ export default function GanttChart() {
     return Math.ceil((viewEnd - viewStart) / (1000 * 60 * 60 * 24));
   }, [viewStart, viewEnd, showWorkingDaysOnly]);
 
-  // Calculate weekly resource demand
-  const resourceData = useMemo(() => {
-    // Get all weeks in the range
-    const weeks = [];
-    const current = new Date(viewStart);
-    // Start from the Monday of the first week
-    const startMonday = new Date(getWeekStart(current));
+  // Resource calculations hook
+  const { resourceData, resourceSummary } = useResourceCalculations({
+    tasks,
+    teams,
+    viewStart,
+    viewEnd,
+    capacityConfig,
+    filterTeam,
+  });
 
-    const endDate = new Date(viewEnd);
-    endDate.setMonth(endDate.getMonth() + 2); // Extend a bit beyond view
-
-    let weekStart = new Date(startMonday);
-    while (weekStart < endDate) {
-      weeks.push(weekStart.toISOString().split('T')[0]);
-      weekStart.setDate(weekStart.getDate() + 7);
-    }
-
-    // Collect all work items (subtasks + parent tasks without subtasks)
-    const workItems = [];
-
-    // Apply team filter if active
-    const tasksToProcess = filterTeam
-      ? tasks.filter(t => t.team === filterTeam || t.subtasks.some(st => st.team === filterTeam))
-      : tasks;
-
-    tasksToProcess.forEach(task => {
-      if (task.subtasks.length === 0) {
-        // Parent task without subtasks - use its own effort
-        if (!filterTeam || task.team === filterTeam) {
-          workItems.push({
-            startDate: task.startDate,
-            endDate: task.endDate,
-            feEffortDays: task.feEffortDays || 0,
-            beEffortDays: task.beEffortDays || 0,
-            team: task.team
-          });
-        }
-      } else {
-        // Use subtasks
-        task.subtasks.forEach(st => {
-          if (!filterTeam || st.team === filterTeam) {
-            workItems.push({
-              startDate: st.startDate,
-              endDate: st.endDate,
-              feEffortDays: st.feEffortDays || 0,
-              beEffortDays: st.beEffortDays || 0,
-              team: st.team
-            });
-          }
-        });
-      }
-    });
-
-    // Calculate FTE for each week - by team
-    return weeks.map(weekStart => {
-      // Initialize per-team tracking
-      const teamData = {};
-      Object.keys(teams).forEach(team => {
-        teamData[team] = { fe: 0, be: 0 };
-      });
-      teamData['Unassigned'] = { fe: 0, be: 0 };
-
-      workItems.forEach(item => {
-        if (rangeOverlapsWeek(item.startDate, item.endDate, weekStart)) {
-          const workingDays = getWorkingDays(item.startDate, item.endDate);
-          const dailyFe = item.feEffortDays / workingDays;
-          const dailyBe = item.beEffortDays / workingDays;
-          const team = item.team || 'Unassigned';
-          if (teamData[team]) {
-            teamData[team].fe += dailyFe;
-            teamData[team].be += dailyBe;
-          } else {
-            teamData['Unassigned'].fe += dailyFe;
-            teamData['Unassigned'].be += dailyBe;
-          }
-        }
-      });
-
-      // Calculate totals and check over-allocation per team
-      let totalFe = 0;
-      let totalBe = 0;
-      const teamBreakdown = {};
-      let hasOverAllocation = false;
-
-      Object.keys(teams).forEach(team => {
-        const cap = capacityConfig.teamCapacities[team] || { fe: 1, be: 1 };
-        const fe = Math.round(teamData[team].fe * 100) / 100;
-        const be = Math.round(teamData[team].be * 100) / 100;
-        const feOver = fe > cap.fe;
-        const beOver = be > cap.be;
-        if (feOver || beOver) hasOverAllocation = true;
-        teamBreakdown[team] = { fe, be, feCap: cap.fe, beCap: cap.be, feOver, beOver };
-        totalFe += fe;
-        totalBe += be;
-      });
-
-      // Add unassigned
-      if (teamData['Unassigned'].fe > 0 || teamData['Unassigned'].be > 0) {
-        teamBreakdown['Unassigned'] = {
-          fe: Math.round(teamData['Unassigned'].fe * 100) / 100,
-          be: Math.round(teamData['Unassigned'].be * 100) / 100,
-          feCap: 0, beCap: 0, feOver: true, beOver: true
-        };
-        totalFe += teamBreakdown['Unassigned'].fe;
-        totalBe += teamBreakdown['Unassigned'].be;
-      }
-
-      const weekDate = new Date(weekStart);
-      const weekLabel = weekDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-      // Calculate total capacity
-      const totalFeCap = Object.values(capacityConfig.teamCapacities).reduce((sum, t) => sum + t.fe, 0);
-      const totalBeCap = Object.values(capacityConfig.teamCapacities).reduce((sum, t) => sum + t.be, 0);
-
-      return {
-        week: weekLabel,
-        weekStart,
-        fe: totalFe,
-        be: totalBe,
-        feCap: totalFeCap,
-        beCap: totalBeCap,
-        feOver: totalFe > totalFeCap,
-        beOver: totalBe > totalBeCap,
-        teamBreakdown,
-        hasTeamOverAllocation: hasOverAllocation
-      };
-    });
-  }, [tasks, viewStart, viewEnd, capacityConfig, filterTeam]);
-
-  // Calculate totals for summary - with per-team breakdown
-  const resourceSummary = useMemo(() => {
-    // Initialize per-team totals
-    const teamTotals = {};
-    Object.keys(teams).forEach(team => {
-      teamTotals[team] = { feDays: 0, beDays: 0, peakFe: 0, peakBe: 0, overAllocatedWeeks: 0 };
-    });
-
-    // Apply team filter
-    const tasksToProcess = filterTeam
-      ? tasks.filter(t => t.team === filterTeam || t.subtasks.some(st => st.team === filterTeam))
-      : tasks;
-
-    let totalFeDays = 0;
-    let totalBeDays = 0;
-
-    tasksToProcess.forEach(task => {
-      if (task.subtasks.length === 0) {
-        if (!filterTeam || task.team === filterTeam) {
-          totalFeDays += task.feEffortDays || 0;
-          totalBeDays += task.beEffortDays || 0;
-          if (task.team && teamTotals[task.team]) {
-            teamTotals[task.team].feDays += task.feEffortDays || 0;
-            teamTotals[task.team].beDays += task.beEffortDays || 0;
-          }
-        }
-      } else {
-        task.subtasks.forEach(st => {
-          if (!filterTeam || st.team === filterTeam) {
-            totalFeDays += st.feEffortDays || 0;
-            totalBeDays += st.beEffortDays || 0;
-            if (st.team && teamTotals[st.team]) {
-              teamTotals[st.team].feDays += st.feEffortDays || 0;
-              teamTotals[st.team].beDays += st.beEffortDays || 0;
-            }
-          }
-        });
-      }
-    });
-
-    // Calculate peaks and over-allocation per team from resourceData
-    Object.keys(teams).forEach(team => {
-      resourceData.forEach(week => {
-        if (week.teamBreakdown && week.teamBreakdown[team]) {
-          const tb = week.teamBreakdown[team];
-          teamTotals[team].peakFe = Math.max(teamTotals[team].peakFe, tb.fe);
-          teamTotals[team].peakBe = Math.max(teamTotals[team].peakBe, tb.be);
-          if (tb.feOver || tb.beOver) {
-            teamTotals[team].overAllocatedWeeks++;
-          }
-        }
-      });
-    });
-
-    const peakFe = Math.max(...resourceData.map(d => d.fe), 0);
-    const peakBe = Math.max(...resourceData.map(d => d.be), 0);
-    const overAllocatedWeeks = resourceData.filter(d => d.hasTeamOverAllocation).length;
-
-    // Count teams with over-allocation issues
-    const teamsOverAllocated = Object.entries(teamTotals).filter(([_, t]) => t.overAllocatedWeeks > 0).map(([name]) => name);
-
-    return { totalFeDays, totalBeDays, peakFe, peakBe, overAllocatedWeeks, teamTotals, teamsOverAllocated };
-  }, [tasks, resourceData, filterTeam]);
 
   const months = useMemo(() => {
     const result = [];
@@ -1496,13 +807,6 @@ export default function GanttChart() {
     return lines;
   };
 
-  const statusColors = {
-    'ToDo': 'bg-gray-100 text-gray-700',
-    'To Do': 'bg-gray-100 text-gray-700',
-    'In Progress': 'bg-blue-100 text-blue-700',
-    'Done': 'bg-green-100 text-green-700'
-  };
-
   const cycleStatus = (taskId) => {
     const statuses = ['ToDo', 'In Progress', 'Done'];
     setTasks(prev => prev.map(t => {
@@ -1538,20 +842,6 @@ export default function GanttChart() {
     a.href = url;
     a.download = 'gantt-schedule.json';
     a.click();
-  };
-
-  // Copy export data to clipboard
-  const copyExportData = () => {
-    const exportData = generateExportData();
-    const payload = {
-      tasks: exportData,
-      teams: Object.keys(teams),
-      segments: Object.keys(segments),
-      exportedAt: new Date().toISOString()
-    };
-
-    const text = JSON.stringify(payload, null, 2);
-    setSyncOutput({ type: 'full', data: text });
   };
 
   const today = new Date();
@@ -1796,19 +1086,7 @@ export default function GanttChart() {
             </div>
             <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 340px)' }}>
               {tasks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-                  <div className="text-6xl mb-4">📋</div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No tasks yet</h3>
-                  <p className="text-gray-500 mb-6 max-w-sm">
-                    Import JSON data to get started, or add tasks manually using the timeline.
-                  </p>
-                  <button
-                    onClick={() => setShowLoadModal(true)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-                  >
-                    📂 Import Data
-                  </button>
-                </div>
+                <EmptyState onImport={() => setShowLoadModal(true)} />
               ) : visibleRows.map((row) => {
                 if (row.type === 'task') {
                   const task = row.data;
@@ -1869,7 +1147,7 @@ export default function GanttChart() {
                             e.stopPropagation();
                             cycleStatus(task.id);
                           }}
-                          className={`px-2 py-0.5 text-xs rounded ml-2 ${statusColors[task.status]}`}
+                          className={`px-2 py-0.5 text-xs rounded ml-2 ${STATUS_COLORS[task.status]}`}
                         >
                           {task.status}
                         </button>
@@ -1913,7 +1191,7 @@ export default function GanttChart() {
                           onFEChange={(val) => updateSubtask(parent.id, subtask.id, { feEffortDays: val })}
                           onBEChange={(val) => updateSubtask(parent.id, subtask.id, { beEffortDays: val })}
                         />
-                        <span className={`px-1.5 py-0.5 text-xs rounded ${statusColors[subtask.status]}`}>
+                        <span className={`px-1.5 py-0.5 text-xs rounded ${STATUS_COLORS[subtask.status]}`}>
                           {subtask.status}
                         </span>
                       </div>
@@ -2132,589 +1410,59 @@ export default function GanttChart() {
         </div>
 
         {/* Legend */}
-        <div className="mt-4 bg-white rounded-lg shadow-sm p-4">
-          <div className="flex flex-wrap gap-6 text-sm">
-            <div className="flex items-center gap-4">
-              <span className="text-gray-500 font-medium">Teams:</span>
-              {Object.entries(teams).map(([key, team]) => (
-                <div key={key} className="flex items-center gap-1">
-                  <span className={`${team.bg} ${team.text} px-1.5 py-0.5 rounded text-xs font-medium`}>{team.name}</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="text-gray-500 font-medium">Segments:</span>
-              {Object.entries(segments).map(([key, seg]) => (
-                <div key={key} className="flex items-center gap-1">
-                  <span
-                    className="px-1.5 py-0.5 rounded text-xs border bg-white"
-                    style={{ borderColor: seg.color, color: seg.color }}
-                  >
-                    {seg.name}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <Legend teams={teams} segments={segments} />
 
         {/* Resource Planning Section */}
-        <div className="mt-4 bg-white rounded-lg shadow-sm">
-          {/* Header */}
-          <div className="px-4 py-3 border-b flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h3 className="font-semibold text-gray-900">📊 Resource Planning</h3>
-              <button
-                onClick={() => setShowResourceChart(!showResourceChart)}
-                className="text-sm text-blue-600 hover:text-blue-800"
-              >
-                {showResourceChart ? '▼ Hide' : '▶ Show'}
-              </button>
-            </div>
-            <div className="flex items-center gap-4">
-              {/* Summary Stats */}
-              <div className="flex items-center gap-6 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">Total FE:</span>
-                  <span className="font-medium text-blue-600">{resourceSummary.totalFeDays} days</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">Total BE:</span>
-                  <span className="font-medium text-green-600">{resourceSummary.totalBeDays} days</span>
-                </div>
-                {resourceSummary.overAllocatedWeeks > 0 && (
-                  <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium">
-                    ⚠️ {resourceSummary.overAllocatedWeeks} weeks over-allocated
-                  </span>
-                )}
-                {resourceSummary.teamsOverAllocated.length > 0 && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-gray-500">Teams:</span>
-                    {resourceSummary.teamsOverAllocated.map(team => (
-                      <span key={team} className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs" style={{ borderLeft: `3px solid ${teams[team]?.color}` }}>
-                        {team}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* View Mode Toggle */}
-              <div className="flex items-center border rounded-lg overflow-hidden text-xs">
-                <button
-                  onClick={() => setResourceViewMode('byTeam')}
-                  className={`px-3 py-1.5 ${resourceViewMode === 'byTeam' ? 'bg-blue-500 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
-                >
-                  By Team
-                </button>
-                <button
-                  onClick={() => setResourceViewMode('aggregate')}
-                  className={`px-3 py-1.5 ${resourceViewMode === 'aggregate' ? 'bg-blue-500 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
-                >
-                  Aggregate
-                </button>
-              </div>
-              <button
-                onClick={() => setShowCapacitySettings(!showCapacitySettings)}
-                className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg"
-              >
-                ⚙️ Capacity Settings
-              </button>
-            </div>
-          </div>
-
-          {/* Capacity Settings Panel - Team-based */}
-          {showCapacitySettings && (
-            <div className="px-4 py-3 bg-gray-50 border-b">
-              <div className="flex items-start gap-6">
-                <table className="text-sm">
-                  <thead>
-                    <tr className="text-gray-500">
-                      <th className="text-left pr-4 pb-2 font-medium">Team</th>
-                      <th className="text-center px-3 pb-2 font-medium">FE Cap</th>
-                      <th className="text-center px-3 pb-2 font-medium">BE Cap</th>
-                      <th className="text-center px-3 pb-2 font-medium">FE Used</th>
-                      <th className="text-center px-3 pb-2 font-medium">BE Used</th>
-                      <th className="text-center px-3 pb-2 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(teams).map(([teamKey, team]) => {
-                      const cap = capacityConfig.teamCapacities[teamKey] || { fe: 1, be: 1 };
-                      const stats = resourceSummary.teamTotals[teamKey] || { peakFe: 0, peakBe: 0, overAllocatedWeeks: 0 };
-                      const feOver = stats.peakFe > cap.fe;
-                      const beOver = stats.peakBe > cap.be;
-                      return (
-                        <tr key={teamKey} className="border-t border-gray-200">
-                          <td className="py-2 pr-4">
-                            <div className="flex items-center gap-2">
-                              <div className="w-3 h-3 rounded" style={{ backgroundColor: team.color }} />
-                              <span className="font-medium">{team.name}</span>
-                            </div>
-                          </td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={cap.fe}
-                              onChange={(e) => setCapacityConfig(prev => ({
-                                ...prev,
-                                teamCapacities: {
-                                  ...prev.teamCapacities,
-                                  [teamKey]: { ...prev.teamCapacities[teamKey], fe: parseFloat(e.target.value) || 0 }
-                                }
-                              }))}
-                              className="w-16 px-2 py-1 border rounded text-sm text-center"
-                            />
-                          </td>
-                          <td className="py-2 px-3">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={cap.be}
-                              onChange={(e) => setCapacityConfig(prev => ({
-                                ...prev,
-                                teamCapacities: {
-                                  ...prev.teamCapacities,
-                                  [teamKey]: { ...prev.teamCapacities[teamKey], be: parseFloat(e.target.value) || 0 }
-                                }
-                              }))}
-                              className="w-16 px-2 py-1 border rounded text-sm text-center"
-                            />
-                          </td>
-                          <td className={`py-2 px-3 text-center ${feOver ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                            {stats.peakFe.toFixed(1)}
-                          </td>
-                          <td className={`py-2 px-3 text-center ${beOver ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                            {stats.peakBe.toFixed(1)}
-                          </td>
-                          <td className="py-2 px-3 text-center">
-                            {stats.overAllocatedWeeks > 0 ? (
-                              <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">
-                                ⚠️ {stats.overAllocatedWeeks}w
-                              </span>
-                            ) : (
-                              <span className="text-green-600 text-xs">✓ OK</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <div className="border-l pl-6 ml-6">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Calendar Display</h4>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showWorkingDaysOnly}
-                      onChange={(e) => setShowWorkingDaysOnly(e.target.checked)}
-                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-gray-600">Show working days only (M-F)</span>
-                  </label>
-                </div>
-                <div className="flex-1" />
-                <div className="text-right">
-                  <p className="text-xs text-gray-500 mb-2">
-                    Capacity = # of full-time developers per team per week
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    Total: {Object.values(capacityConfig.teamCapacities).reduce((s,t) => s + t.fe, 0)} FE / {Object.values(capacityConfig.teamCapacities).reduce((s,t) => s + t.be, 0)} BE
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Resource Chart */}
-          {showResourceChart && (
-            <div className="p-4">
-              {resourceViewMode === 'byTeam' ? (
-                /* By Team View - Separate chart per team */
-                <div className="space-y-4">
-                  {Object.entries(teams).map(([teamKey, team]) => {
-                    const cap = capacityConfig.teamCapacities[teamKey] || { fe: 1, be: 1 };
-                    const teamData = resourceData.map(week => ({
-                      week: week.week,
-                      weekStart: week.weekStart,
-                      fe: week.teamBreakdown?.[teamKey]?.fe || 0,
-                      be: week.teamBreakdown?.[teamKey]?.be || 0,
-                      feCap: cap.fe,
-                      beCap: cap.be,
-                      feOver: week.teamBreakdown?.[teamKey]?.feOver,
-                      beOver: week.teamBreakdown?.[teamKey]?.beOver
-                    }));
-                    const hasData = teamData.some(d => d.fe > 0 || d.be > 0);
-                    if (!hasData) return null;
-                    const stats = resourceSummary.teamTotals[teamKey];
-                    return (
-                      <div key={teamKey} className="border rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded" style={{ backgroundColor: team.color }} />
-                            <span className="font-medium text-gray-800">{team.name}</span>
-                            <span className="text-xs text-gray-500">
-                              (Cap: {cap.fe} FE / {cap.be} BE)
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-4 text-xs">
-                            <span className="text-gray-500">
-                              Total: <span className="font-medium text-blue-600">{stats?.feDays || 0} FE days</span> / <span className="font-medium text-green-600">{stats?.beDays || 0} BE days</span>
-                            </span>
-                            {stats?.overAllocatedWeeks > 0 && (
-                              <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded">
-                                ⚠️ {stats.overAllocatedWeeks} weeks over
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="h-32">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={teamData} margin={{ top: 10, right: 30, left: 20, bottom: 5 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                              <XAxis dataKey="week" tick={{ fontSize: 9 }} interval={1} angle={-45} textAnchor="end" height={40} />
-                              <YAxis tick={{ fontSize: 10 }} domain={[0, Math.max(cap.fe, cap.be) * 1.5]} />
-                              <Tooltip
-                                content={({ active, payload, label }) => {
-                                  if (!active || !payload?.length) return null;
-                                  const d = payload[0]?.payload;
-                                  return (
-                                    <div className="bg-white border rounded shadow-lg p-2 text-xs">
-                                      <p className="font-medium">{team.name} - Week of {label}</p>
-                                      <div className={d?.feOver ? 'text-red-600' : ''}>FE: {d?.fe?.toFixed(2)} / {d?.feCap} {d?.feOver && '⚠️'}</div>
-                                      <div className={d?.beOver ? 'text-red-600' : ''}>BE: {d?.be?.toFixed(2)} / {d?.beCap} {d?.beOver && '⚠️'}</div>
-                                    </div>
-                                  );
-                                }}
-                              />
-                              <ReferenceLine y={cap.fe} stroke={team.color} strokeDasharray="5 5" strokeOpacity={0.7} />
-                              <ReferenceLine y={cap.be} stroke={team.color} strokeDasharray="2 2" strokeOpacity={0.5} />
-                              <Bar dataKey="fe" name="FE" fill={team.color} radius={[2, 2, 0, 0]} />
-                              <Bar dataKey="be" name="BE" fill={team.color} fillOpacity={0.5} radius={[2, 2, 0, 0]} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                /* Aggregate View - Original combined chart */
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={resourceData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      <XAxis dataKey="week" tick={{ fontSize: 11 }} interval={0} angle={-45} textAnchor="end" height={60} />
-                      <YAxis tick={{ fontSize: 11 }} label={{ value: 'FTE', angle: -90, position: 'insideLeft', fontSize: 12 }} />
-                      <Tooltip
-                        content={({ active, payload, label }) => {
-                          if (!active || !payload?.length) return null;
-                          const data = payload[0]?.payload;
-                          return (
-                            <div className="bg-white border rounded-lg shadow-lg p-3 text-sm">
-                              <p className="font-medium mb-2">Week of {label}</p>
-                              <div className="space-y-1">
-                                <div className="flex justify-between gap-4">
-                                  <span className="text-blue-600">FE:</span>
-                                  <span className={data?.feOver ? 'text-red-600 font-medium' : ''}>{data?.fe?.toFixed(2)} / {data?.feCap} {data?.feOver && '⚠️'}</span>
-                                </div>
-                                <div className="flex justify-between gap-4">
-                                  <span className="text-green-600">BE:</span>
-                                  <span className={data?.beOver ? 'text-red-600 font-medium' : ''}>{data?.be?.toFixed(2)} / {data?.beCap} {data?.beOver && '⚠️'}</span>
-                                </div>
-                                {data?.teamBreakdown && (
-                                  <div className="border-t pt-1 mt-1 text-xs text-gray-500">
-                                    {Object.entries(data.teamBreakdown).filter(([_, v]) => v.fe > 0 || v.be > 0).map(([t, v]) => (
-                                      <div key={t} className="flex justify-between">
-                                        <span>{t}:</span>
-                                        <span>{v.fe.toFixed(1)} FE / {v.be.toFixed(1)} BE</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                      <Legend />
-                      <ReferenceLine y={Object.values(capacityConfig.teamCapacities).reduce((s,t) => s + t.fe, 0)} stroke="#3b82f6" strokeDasharray="5 5" label={{ value: `FE Cap`, position: 'right', fontSize: 10, fill: '#3b82f6' }} />
-                      <ReferenceLine y={Object.values(capacityConfig.teamCapacities).reduce((s,t) => s + t.be, 0)} stroke="#10b981" strokeDasharray="5 5" label={{ value: `BE Cap`, position: 'right', fontSize: 10, fill: '#10b981' }} />
-                      <Bar dataKey="fe" name="FE Demand" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="be" name="BE Demand" fill="#10b981" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-
-              {/* Over-allocation warnings - by team */}
-              {resourceSummary.teamsOverAllocated.length > 0 && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <h4 className="font-medium text-red-800 mb-2">⚠️ Team Over-allocation Summary</h4>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    {resourceSummary.teamsOverAllocated.map(teamKey => {
-                      const stats = resourceSummary.teamTotals[teamKey];
-                      const cap = capacityConfig.teamCapacities[teamKey];
-                      return (
-                        <div key={teamKey} className="flex items-center gap-2 bg-white px-3 py-2 rounded border border-red-200">
-                          <div className="w-2 h-2 rounded" style={{ backgroundColor: teams[teamKey]?.color }} />
-                          <span className="font-medium text-gray-700">{teamKey}</span>
-                          <span className="text-red-600 text-xs">
-                            Peak: {stats.peakFe.toFixed(1)}/{cap.fe} FE, {stats.peakBe.toFixed(1)}/{cap.be} BE
-                          </span>
-                          <span className="text-gray-500 text-xs">({stats.overAllocatedWeeks} weeks)</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <ResourcePlanningSection
+          showResourceChart={showResourceChart}
+          setShowResourceChart={setShowResourceChart}
+          resourceSummary={resourceSummary}
+          teams={teams}
+          resourceViewMode={resourceViewMode}
+          setResourceViewMode={setResourceViewMode}
+          showCapacitySettings={showCapacitySettings}
+          setShowCapacitySettings={setShowCapacitySettings}
+          capacityConfig={capacityConfig}
+          setCapacityConfig={setCapacityConfig}
+          showWorkingDaysOnly={showWorkingDaysOnly}
+          setShowWorkingDaysOnly={setShowWorkingDaysOnly}
+          resourceData={resourceData}
+        />
 
         {/* Load from JIRA Modal */}
         {showLoadModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[85vh] overflow-hidden">
-              <div className="px-6 py-4 border-b flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">📂 Load Epic from JIRA</h2>
-                <button onClick={() => setShowLoadModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
-              </div>
-              <div className="p-6 overflow-auto max-h-[65vh]">
-                <div className="space-y-4">
-                  {/* Instructions */}
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                    <h3 className="font-medium text-blue-900 mb-2">Import Data</h3>
-                    <p className="text-sm text-blue-800">
-                      Paste JSON data below to load tasks into the Gantt chart. You can export data from an existing chart and import it here.
-                    </p>
-                  </div>
-
-                  {/* JSON Import Area */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Paste JSON Data
-                    </label>
-                    <textarea
-                      value={jiraImportData}
-                      onChange={(e) => setJiraImportData(e.target.value)}
-                      placeholder='{"tasks": [...]}'
-                      className="w-full h-48 px-3 py-2 border rounded-lg text-sm font-mono"
-                    />
-                  </div>
-
-                  {/* Sample Format */}
-                  <details className="text-sm">
-                    <summary className="text-gray-500 cursor-pointer hover:text-gray-700">
-                      Expected JSON format
-                    </summary>
-                    <pre className="mt-2 p-3 bg-gray-100 rounded-lg text-xs overflow-auto">
-{`{
-  "tasks": [
-    {
-      "id": "TASK-001",
-      "name": "Phase 1: MVP",
-      "startDate": "2026-02-03",
-      "endDate": "2026-03-13",
-      "team": "Engineering",
-      "segments": ["Core"],
-      "subtasks": [
-        {
-          "id": "TASK-002",
-          "name": "1.1 Setup project",
-          "startDate": "2026-02-03",
-          "endDate": "2026-02-14",
-          "team": "Engineering"
-        }
-      ]
-    }
-  ]
-}`}
-                    </pre>
-                  </details>
-                </div>
-              </div>
-              <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
-                <button
-                  onClick={() => setShowLoadModal(false)}
-                  className="px-4 py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => importFromJira(jiraImportData)}
-                  disabled={!jiraImportData.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  📥 Import Data
-                </button>
-              </div>
-            </div>
-          </div>
+          <ImportModal
+            onClose={() => setShowLoadModal(false)}
+            onImport={importFromJira}
+          />
         )}
 
         {/* Teams & Segments Manager Modal */}
         {showTeamsSegmentsManager && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[80vh] overflow-hidden">
-              <div className="px-6 py-4 border-b flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">⚙️ Manage Teams & Segments</h2>
-                <button onClick={() => setShowTeamsSegmentsManager(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
-              </div>
-              <div className="p-6 overflow-auto max-h-[60vh]">
-                <div className="grid grid-cols-2 gap-8">
-                  {/* Teams Column */}
-                  <div>
-                    <h3 className="font-medium text-gray-900 mb-3">Teams</h3>
-                    <div className="space-y-2">
-                      {Object.entries(teams).map(([key, team]) => {
-                        const usage = getTeamUsageCount(key);
-                        return (
-                          <div key={key} className="flex items-center justify-between p-2 border rounded hover:bg-gray-50">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded" style={{ backgroundColor: team.color }} />
-                              <span className="font-medium">{team.name}</span>
-                              {usage > 0 && (
-                                <span className="text-xs text-gray-400">({usage} uses)</span>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => removeTeam(key)}
-                              className="text-red-500 hover:text-red-700 text-sm px-2"
-                              title="Remove team"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <button
-                      onClick={() => {
-                        const name = window.prompt('Enter team name:');
-                        if (name && name.trim()) {
-                          const key = name.trim();
-                          if (teams[key]) {
-                            alert('A team with this name already exists.');
-                            return;
-                          }
-                          const colors = ['#3b82f6', '#8b5cf6', '#10b981', '#f97316', '#ef4444', '#06b6d4', '#ec4899'];
-                          const color = colors[Object.keys(teams).length % colors.length];
-                          addTeam(key, { name: key, color, bg: 'bg-gray-100', text: 'text-gray-700' });
-                        }
-                      }}
-                      className="mt-3 w-full px-3 py-2 border-2 border-dashed border-gray-300 rounded text-sm text-gray-500 hover:border-gray-400 hover:text-gray-600"
-                    >
-                      + Add Team
-                    </button>
-                  </div>
-
-                  {/* Segments Column */}
-                  <div>
-                    <h3 className="font-medium text-gray-900 mb-3">Segments</h3>
-                    <div className="space-y-2">
-                      {Object.entries(segments).map(([key, seg]) => {
-                        const usage = getSegmentUsageCount(key);
-                        return (
-                          <div key={key} className="flex items-center justify-between p-2 border rounded hover:bg-gray-50">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded border-2" style={{ borderColor: seg.color, backgroundColor: 'white' }} />
-                              <span className="font-medium">{seg.name}</span>
-                              {usage > 0 && (
-                                <span className="text-xs text-gray-400">({usage} uses)</span>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => removeSegment(key)}
-                              className="text-red-500 hover:text-red-700 text-sm px-2"
-                              title="Remove segment"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <button
-                      onClick={() => {
-                        const name = window.prompt('Enter segment name:');
-                        if (name && name.trim()) {
-                          const key = name.trim();
-                          if (segments[key]) {
-                            alert('A segment with this name already exists.');
-                            return;
-                          }
-                          const colors = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4'];
-                          const color = colors[Object.keys(segments).length % colors.length];
-                          addSegment(key, { name: key, color, bg: 'bg-gray-100', text: 'text-gray-700' });
-                        }
-                      }}
-                      className="mt-3 w-full px-3 py-2 border-2 border-dashed border-gray-300 rounded text-sm text-gray-500 hover:border-gray-400 hover:text-gray-600"
-                    >
-                      + Add Segment
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="px-6 py-4 border-t bg-gray-50 flex justify-end">
-                <button
-                  onClick={() => setShowTeamsSegmentsManager(false)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          </div>
+          <TeamsSegmentsModal
+            onClose={() => setShowTeamsSegmentsManager(false)}
+            teams={teams}
+            segments={segments}
+            onAddTeam={addTeam}
+            onRemoveTeam={removeTeam}
+            onAddSegment={addSegment}
+            onRemoveSegment={removeSegment}
+            getTeamUsageCount={getTeamUsageCount}
+            getSegmentUsageCount={getSegmentUsageCount}
+          />
         )}
 
         {/* Export Modal */}
         {showSyncModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden">
-              <div className="px-6 py-4 border-b flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900">📤 Export Data</h2>
-                <button onClick={() => setShowSyncModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
-              </div>
-              <div className="p-6 overflow-auto max-h-[60vh]">
-                <div className="mb-4">
-                  <p className="text-sm text-gray-600 mb-4">
-                    Export your Gantt chart data as JSON. You can later import this data to restore your schedule.
-                  </p>
-                  <button
-                    onClick={copyExportData}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
-                  >
-                    📄 Generate Export Data
-                  </button>
-                </div>
-                {syncOutput && (
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Export Data — Select all and copy:
-                    </label>
-                    <textarea
-                      readOnly
-                      value={syncOutput.data}
-                      className="w-full h-64 p-2 text-xs font-mono bg-gray-50 border rounded resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      onFocus={(e) => e.target.select()}
-                    />
-                  </div>
-                )}
-              </div>
-              <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
-                <button
-                  onClick={() => setShowSyncModal(false)}
-                  className="px-4 py-2 border rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
+          <ExportModal
+            onClose={() => setShowSyncModal(false)}
+            onGenerateExport={() => ({
+              tasks: generateExportData(),
+              teams: Object.keys(teams),
+              segments: Object.keys(segments),
+              exportedAt: new Date().toISOString()
+            })}
+          />
         )}
       </div>
     </div>
