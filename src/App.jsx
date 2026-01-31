@@ -1222,7 +1222,24 @@ export default function GanttChart() {
             <div className="bg-gray-50 px-4 py-3 border-b font-semibold text-gray-700 flex items-center justify-between" style={{ height: HEADER_HEIGHT }}>
               <span>Tasks</span>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-400 font-normal">FE/BE</span>
+                <span className="text-xs text-gray-400 font-normal flex items-center gap-1">
+                  FE/BE
+                  <span className="relative group cursor-help">
+                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" strokeWidth="2"/>
+                      <path strokeWidth="2" d="M12 16v-4M12 8h.01"/>
+                    </svg>
+                    <span className="fixed mt-6 ml-[-240px] w-64 px-3 py-2 text-xs bg-gray-800 text-white rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ zIndex: 9999 }}>
+                      <strong className="block mb-1">Effort is additive across hierarchy</strong>
+                      <span className="text-gray-300 block">
+                        All effort values sum up: parent + subtasks + nested subtasks. Set effort at any level and it contributes to total capacity.
+                      </span>
+                      <span className="text-gray-400 block mt-1.5 text-[10px]">
+                        Example: Phase (5/3) + Task (10/2) + Subtask (3/1) = 18/6 total
+                      </span>
+                    </span>
+                  </span>
+                </span>
                 <span className="text-xs text-gray-400 font-normal">{visibleRows.length} items</span>
               </div>
             </div>
@@ -1276,14 +1293,12 @@ export default function GanttChart() {
                             />
                           </div>
                         </div>
-                        {!hasSubtasks && (
-                          <CompactEffortInput
-                            feValue={task.feEffortDays}
-                            beValue={task.beEffortDays}
-                            onFEChange={(val) => updateTask(task.id, { feEffortDays: val })}
-                            onBEChange={(val) => updateTask(task.id, { beEffortDays: val })}
-                          />
-                        )}
+                        <CompactEffortInput
+                          feValue={task.feEffortDays}
+                          beValue={task.beEffortDays}
+                          onFEChange={(val) => updateTask(task.id, { feEffortDays: val })}
+                          onBEChange={(val) => updateTask(task.id, { beEffortDays: val })}
+                        />
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

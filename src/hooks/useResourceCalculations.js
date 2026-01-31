@@ -29,7 +29,7 @@ export default function useResourceCalculations({
     // Collect all work items (leaf items - those without subtasks)
     const workItems = [];
 
-    // Recursive function to collect leaf work items
+    // Recursive function to collect all work items (including parent tasks with effort)
     const collectLeafItems = (items, parentDates = {}) => {
       items.forEach(item => {
         const itemDates = {
@@ -37,9 +37,9 @@ export default function useResourceCalculations({
           endDate: item.endDate || parentDates.endDate
         };
 
-        if (!item.subtasks || item.subtasks.length === 0) {
-          // Leaf item - use its effort
-          if (!filterTeam || item.team === filterTeam) {
+        // Add this item's effort if it has any
+        if (!filterTeam || item.team === filterTeam) {
+          if (item.feEffortDays || item.beEffortDays) {
             workItems.push({
               startDate: itemDates.startDate,
               endDate: itemDates.endDate,
@@ -48,8 +48,10 @@ export default function useResourceCalculations({
               team: item.team
             });
           }
-        } else {
-          // Has subtasks - recurse into them
+        }
+
+        // Then recurse into subtasks if they exist
+        if (item.subtasks && item.subtasks.length > 0) {
           collectLeafItems(item.subtasks, itemDates);
         }
       });
@@ -172,21 +174,21 @@ export default function useResourceCalculations({
     let totalFeDays = 0;
     let totalBeDays = 0;
 
-    // Recursive function to sum leaf item efforts
+    // Recursive function to sum all item efforts (including parent tasks)
     const sumLeafEfforts = (items) => {
       items.forEach(item => {
-        if (!item.subtasks || item.subtasks.length === 0) {
-          // Leaf item
-          if (!filterTeam || item.team === filterTeam) {
-            totalFeDays += item.feEffortDays || 0;
-            totalBeDays += item.beEffortDays || 0;
-            if (item.team && teamTotals[item.team]) {
-              teamTotals[item.team].feDays += item.feEffortDays || 0;
-              teamTotals[item.team].beDays += item.beEffortDays || 0;
-            }
+        // Add this item's effort if it matches filter
+        if (!filterTeam || item.team === filterTeam) {
+          totalFeDays += item.feEffortDays || 0;
+          totalBeDays += item.beEffortDays || 0;
+          if (item.team && teamTotals[item.team]) {
+            teamTotals[item.team].feDays += item.feEffortDays || 0;
+            teamTotals[item.team].beDays += item.beEffortDays || 0;
           }
-        } else {
-          // Has subtasks - recurse
+        }
+
+        // Then recurse into subtasks if they exist
+        if (item.subtasks && item.subtasks.length > 0) {
           sumLeafEfforts(item.subtasks);
         }
       });
