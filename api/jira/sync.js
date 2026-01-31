@@ -1,5 +1,5 @@
-import { getAccessToken, unauthorizedResponse, jsonResponse, parseCookies } from './_auth.js';
-import { appendGanttConfig } from '../../src/utils/ganttConfig.js';
+import { getAccessToken, unauthorizedResponse, jsonResponse } from './_auth.js';
+import { appendGanttConfig, parseGanttConfig } from '../../src/utils/ganttConfig.js';
 
 /**
  * Sync GANTT_CONFIG back to JIRA issue description
@@ -52,8 +52,13 @@ export default async function handler(request) {
       }
     }
 
-    // Append or update GANTT_CONFIG
-    const newDescription = appendGanttConfig(currentDescription, config);
+    // Parse existing GANTT_CONFIG and merge with new values
+    // This ensures we don't lose existing fields when only updating some
+    const existingConfig = parseGanttConfig(currentDescription) || {};
+    const mergedConfig = { ...existingConfig, ...config };
+
+    // Append merged GANTT_CONFIG (removes old one first)
+    const newDescription = appendGanttConfig(currentDescription, mergedConfig);
 
     // Update the issue with new description
     // Note: JIRA API v3 requires ADF format for description

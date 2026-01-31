@@ -108,10 +108,32 @@ export function parseGanttConfig(description, debugKey = null) {
   return null;
 }
 
+// Remove all GANTT_CONFIG blocks from description (all variants)
+export function removeGanttConfig(description) {
+  if (!description) return '';
+
+  let cleaned = description;
+
+  // Remove GANTT_CONFIG with backticks (anywhere in text)
+  cleaned = cleaned.replace(/`GANTT_CONFIG:\s*\{[^`]+\}`/g, '');
+
+  // Remove GANTT_CONFIG without backticks (match until end of line)
+  // JSON is always on single line, so match everything from GANTT_CONFIG: to newline
+  cleaned = cleaned.replace(/GANTT_CONFIG:\s*\{[^\n]+\}\s*\n?/g, '');
+
+  // Remove separator lines that are now orphaned (---- with only whitespace around)
+  cleaned = cleaned.replace(/\n*-{3,}\s*\n*/g, '\n\n');
+
+  // Clean up excessive whitespace
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+  return cleaned;
+}
+
 // Generate description with GANTT_CONFIG appended
 export function appendGanttConfig(description, config) {
-  // Remove existing GANTT_CONFIG if present
-  const cleanDesc = (description || '').replace(/\n*-{3,}\n*`GANTT_CONFIG:[^`]+`\s*$/, '').trim();
+  // Remove ALL existing GANTT_CONFIG blocks first
+  const cleanDesc = removeGanttConfig(description);
   const configJson = JSON.stringify(config);
   return `${cleanDesc}\n\n----\n\n\`GANTT_CONFIG: ${configJson}\``;
 }

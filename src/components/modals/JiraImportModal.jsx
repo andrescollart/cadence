@@ -214,7 +214,12 @@ export default function JiraImportModal({ isOpen, onClose, onImport }) {
       console.log(`\nSummary: ${report.length} items | ${withStart} with start date | ${withEnd} with end date | ${withBothDates} with both dates`);
       console.log('='.repeat(100));
 
-      onImport({ tasks: importData });
+      onImport({
+        tasks: importData,
+        cloudId: selectedResource.id,
+        projectKey: selectedProject.key,
+        fieldMapping,
+      });
       onClose();
     } catch (err) {
       console.error('Import error:', err);

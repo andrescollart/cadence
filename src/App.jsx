@@ -40,6 +40,7 @@ import EmptyState from './components/EmptyState';
 import { useResourceCalculations } from './hooks';
 import AuthButton from './components/auth/AuthButton';
 import JiraImportModal from './components/modals/JiraImportModal';
+import PushToJiraModal from './components/modals/PushToJiraModal';
 
 const initialTasks = [];
 
@@ -133,6 +134,18 @@ export default function GanttChart() {
   // Import state
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [showJiraImportModal, setShowJiraImportModal] = useState(false);
+  const [showPushToJiraModal, setShowPushToJiraModal] = useState(false);
+
+  // JIRA import source tracking - for push-back functionality
+  const JIRA_IMPORT_STATE_KEY = 'jira_import_state';
+  const [jiraImportSource, setJiraImportSource] = useState(() => {
+    try {
+      const saved = localStorage.getItem(JIRA_IMPORT_STATE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   const chartRef = useRef(null);
   const chartContainerRef = useRef(null);
@@ -150,31 +163,44 @@ export default function GanttChart() {
   ];
 
   // Import tasks from JIRA JSON data
+  // jiraData can include: { tasks, cloudId?, projectKey?, fieldMapping? }
   const importFromJira = useCallback((jiraData) => {
     try {
       const data = typeof jiraData === 'string' ? JSON.parse(jiraData) : jiraData;
 
-      // Track original dates for sync comparison
-      const newOriginalDates = {};
+      // Track original state for push-back change detection
+      const originalState = {};
 
       // Collect all unique teams and segments from the data
       const foundTeams = new Set();
       const foundSegments = new Set();
+
+      // Helper to capture original state for an item
+      const captureOriginalState = (id, startDate, endDate, team, segments, feEffortDays, beEffortDays) => {
+        originalState[id] = {
+          startDate: startDate || null,
+          endDate: endDate || null,
+          team: team || null,
+          segments: segments || [],
+          feEffortDays: feEffortDays || 0,
+          beEffortDays: beEffortDays || 0,
+        };
+      };
 
       // Convert JIRA issues to Gantt tasks
       const newTasks = data.tasks.map((issue, index) => {
         // Parse GANTT_CONFIG from description
         const config = parseGanttConfig(issue.description);
 
-        // Store original dates
-        newOriginalDates[issue.id] = {
-          startDate: issue.startDate,
-          dueDate: issue.endDate
-        };
-
         // Collect team/segments from task
         const taskTeam = config?.team || issue.team || null;
         const taskSegments = config?.segments || issue.segments || [];
+        const taskFeEffort = config?.feEffortDays ?? issue.feEffortDays ?? 0;
+        const taskBeEffort = config?.beEffortDays ?? issue.beEffortDays ?? 0;
+
+        // Capture original state for this task
+        captureOriginalState(issue.id, issue.startDate, issue.endDate, taskTeam, taskSegments, taskFeEffort, taskBeEffort);
+
         if (taskTeam) foundTeams.add(taskTeam);
         taskSegments.forEach(s => foundSegments.add(s));
 
@@ -182,19 +208,21 @@ export default function GanttChart() {
         const buildSubtasks = (items, parentStartDate, parentEndDate) => {
           return (items || []).map(st => {
             const stConfig = parseGanttConfig(st.description);
-            newOriginalDates[st.id] = {
-              startDate: st.startDate,
-              dueDate: st.endDate
-            };
 
             // Collect team/segments from subtask
             const stTeam = stConfig?.team || st.team || null;
             const stSegments = stConfig?.segments || st.segments || [];
-            if (stTeam) foundTeams.add(stTeam);
-            stSegments.forEach(s => foundSegments.add(s));
+            const stFeEffort = stConfig?.feEffortDays ?? st.feEffortDays ?? 0;
+            const stBeEffort = stConfig?.beEffortDays ?? st.beEffortDays ?? 0;
 
             const subtaskStartDate = st.startDate || parentStartDate;
             const subtaskEndDate = st.endDate || parentEndDate;
+
+            // Capture original state for this subtask
+            captureOriginalState(st.id, subtaskStartDate, subtaskEndDate, stTeam, stSegments, stFeEffort, stBeEffort);
+
+            if (stTeam) foundTeams.add(stTeam);
+            stSegments.forEach(s => foundSegments.add(s));
 
             return {
               id: st.id,
@@ -204,8 +232,8 @@ export default function GanttChart() {
               segments: stSegments,
               startDate: subtaskStartDate,
               endDate: subtaskEndDate,
-              feEffortDays: stConfig?.feEffortDays ?? st.feEffortDays ?? 0,
-              beEffortDays: stConfig?.beEffortDays ?? st.beEffortDays ?? 0,
+              feEffortDays: stFeEffort,
+              beEffortDays: stBeEffort,
               subtasks: buildSubtasks(st.subtasks, subtaskStartDate, subtaskEndDate),
             };
           });
@@ -226,8 +254,8 @@ export default function GanttChart() {
           color: PHASE_COLORS[index % PHASE_COLORS.length],
           team: taskTeam,
           segments: taskSegments,
-          feEffortDays: config?.feEffortDays ?? issue.feEffortDays ?? 0,
-          beEffortDays: config?.beEffortDays ?? issue.beEffortDays ?? 0,
+          feEffortDays: taskFeEffort,
+          beEffortDays: taskBeEffort,
           subtasks,
         };
       });
@@ -274,6 +302,17 @@ export default function GanttChart() {
 
       setTasks(newTasks);
       setShowLoadModal(false);
+
+      // Store JIRA import source for push-back functionality
+      if (data.cloudId && data.projectKey) {
+        setJiraImportSource({
+          cloudId: data.cloudId,
+          projectKey: data.projectKey,
+          importedAt: new Date().toISOString(),
+          fieldMapping: data.fieldMapping || {},
+          originalState,
+        });
+      }
 
       // Auto-adjust view to show the data
       if (newTasks.length > 0) {
@@ -750,6 +789,13 @@ export default function GanttChart() {
     }
   }, [handleWheel]);
 
+  // Persist JIRA import source to localStorage
+  useEffect(() => {
+    if (jiraImportSource) {
+      localStorage.setItem(JIRA_IMPORT_STATE_KEY, JSON.stringify(jiraImportSource));
+    }
+  }, [jiraImportSource]);
+
   const removeDependency = (taskId, depId) => {
     setTasks(prev => prev.map(t => {
       if (t.id === taskId) {
@@ -1015,6 +1061,15 @@ export default function GanttChart() {
                 >
                   🔗 JIRA Import
                 </button>
+                {jiraImportSource && (
+                  <button
+                    onClick={() => setShowPushToJiraModal(true)}
+                    className="px-2 py-1 text-xs bg-green-100 hover:bg-green-200 rounded text-green-700"
+                    title="Push changes back to JIRA"
+                  >
+                    ↑ Push to JIRA
+                  </button>
+                )}
               </div>
               <AuthButton />
               <p className="text-gray-500 mt-1">Interactive Schedule & Dependency Manager</p>
@@ -1616,6 +1671,20 @@ export default function GanttChart() {
           isOpen={showJiraImportModal}
           onClose={() => setShowJiraImportModal(false)}
           onImport={importFromJira}
+        />
+
+        {/* Push to JIRA Modal */}
+        <PushToJiraModal
+          isOpen={showPushToJiraModal}
+          onClose={() => setShowPushToJiraModal(false)}
+          tasks={tasks}
+          jiraImportSource={jiraImportSource}
+          onUpdateOriginalState={(newOriginalState) => {
+            setJiraImportSource(prev => prev ? {
+              ...prev,
+              originalState: newOriginalState,
+            } : null);
+          }}
         />
 
         {/* Teams & Segments Manager Modal */}
