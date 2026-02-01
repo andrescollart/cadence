@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock environment variables
 vi.stubEnv('ATLASSIAN_CLIENT_ID', 'test_client_id');
-vi.stubEnv('ATLASSIAN_REDIRECT_URI', 'http://localhost:5173/api/auth/callback');
+vi.stubEnv('ATLASSIAN_REDIRECT_URI', 'http://localhost:5175/api/auth/callback');
 vi.stubEnv('ATLASSIAN_SCOPES', 'read:jira-work offline_access');
 vi.stubEnv('AUTH_SECRET', 'test_secret');
 
@@ -16,7 +16,7 @@ describe('/api/auth/login', () => {
   });
 
   it('redirects to Atlassian authorization URL', async () => {
-    const mockRequest = new Request('http://localhost:5173/api/auth/login');
+    const mockRequest = new Request('http://localhost:5175/api/auth/login');
     const response = await handler(mockRequest);
 
     expect(response.status).toBe(302);
@@ -25,20 +25,20 @@ describe('/api/auth/login', () => {
   });
 
   it('includes required OAuth parameters in redirect URL', async () => {
-    const mockRequest = new Request('http://localhost:5173/api/auth/login');
+    const mockRequest = new Request('http://localhost:5175/api/auth/login');
     const response = await handler(mockRequest);
 
     const location = new URL(response.headers.get('Location'));
     expect(location.searchParams.get('client_id')).toBe('test_client_id');
     expect(location.searchParams.get('redirect_uri')).toBe(
-      'http://localhost:5173/api/auth/callback'
+      'http://localhost:5175/api/auth/callback'
     );
     expect(location.searchParams.get('response_type')).toBe('code');
     expect(location.searchParams.get('scope')).toContain('read:jira-work');
   });
 
   it('includes PKCE code_challenge parameter', async () => {
-    const mockRequest = new Request('http://localhost:5173/api/auth/login');
+    const mockRequest = new Request('http://localhost:5175/api/auth/login');
     const response = await handler(mockRequest);
 
     const location = new URL(response.headers.get('Location'));
@@ -47,7 +47,7 @@ describe('/api/auth/login', () => {
   });
 
   it('includes state parameter for CSRF protection', async () => {
-    const mockRequest = new Request('http://localhost:5173/api/auth/login');
+    const mockRequest = new Request('http://localhost:5175/api/auth/login');
     const response = await handler(mockRequest);
 
     const location = new URL(response.headers.get('Location'));
@@ -56,7 +56,7 @@ describe('/api/auth/login', () => {
   });
 
   it('sets HTTP-only cookies for state and verifier', async () => {
-    const mockRequest = new Request('http://localhost:5173/api/auth/login');
+    const mockRequest = new Request('http://localhost:5175/api/auth/login');
     const response = await handler(mockRequest);
 
     const cookies = response.headers.getSetCookie();
@@ -76,7 +76,7 @@ describe('/api/auth/login', () => {
   });
 
   it('uses audience parameter for Atlassian API', async () => {
-    const mockRequest = new Request('http://localhost:5173/api/auth/login');
+    const mockRequest = new Request('http://localhost:5175/api/auth/login');
     const response = await handler(mockRequest);
 
     const location = new URL(response.headers.get('Location'));

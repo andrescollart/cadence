@@ -63,7 +63,7 @@ export default function viteApiPlugin() {
 
           // Create a Request object from the Node.js request
           const protocol = req.headers['x-forwarded-proto'] || 'http';
-          const host = req.headers.host || 'localhost:5173';
+          const host = req.headers.host || 'localhost:5175';
           const fullUrl = `${protocol}://${host}${req.url}`;
 
           // Read body for POST requests

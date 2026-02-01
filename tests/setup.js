@@ -24,8 +24,8 @@ if (typeof globalThis.crypto === 'undefined') {
 if (typeof window !== 'undefined') {
   delete window.location;
   window.location = {
-    href: 'http://localhost:5173',
-    origin: 'http://localhost:5173',
+    href: 'http://localhost:5175',
+    origin: 'http://localhost:5175',
     pathname: '/',
     search: '',
     assign: vi.fn(),

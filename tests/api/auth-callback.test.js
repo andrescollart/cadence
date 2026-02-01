@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Mock environment variables
 vi.stubEnv('ATLASSIAN_CLIENT_ID', 'test_client_id');
 vi.stubEnv('ATLASSIAN_CLIENT_SECRET', 'test_client_secret');
-vi.stubEnv('ATLASSIAN_REDIRECT_URI', 'http://localhost:5173/api/auth/callback');
+vi.stubEnv('ATLASSIAN_REDIRECT_URI', 'http://localhost:5175/api/auth/callback');
 vi.stubEnv('AUTH_SECRET', 'test_secret');
 
 describe('/api/auth/callback', () => {
@@ -35,7 +35,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('returns error when code is missing', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',
@@ -50,7 +50,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('returns error when state does not match', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=wrong_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=wrong_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=correct_state; pkce_verifier=test_verifier',
@@ -65,7 +65,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('returns error when PKCE verifier is missing', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state',
@@ -80,7 +80,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('exchanges code for tokens with correct parameters', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',
@@ -105,11 +105,11 @@ describe('/api/auth/callback', () => {
     expect(callBody.client_secret).toBe('test_client_secret');
     expect(callBody.code).toBe('auth_code');
     expect(callBody.code_verifier).toBe('test_verifier');
-    expect(callBody.redirect_uri).toBe('http://localhost:5173/api/auth/callback');
+    expect(callBody.redirect_uri).toBe('http://localhost:5175/api/auth/callback');
   });
 
   it('sets access token in HTTP-only cookie on success', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',
@@ -126,7 +126,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('sets refresh token in HTTP-only cookie on success', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',
@@ -142,7 +142,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('clears PKCE cookies after successful exchange', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',
@@ -165,7 +165,7 @@ describe('/api/auth/callback', () => {
   });
 
   it('redirects to app root on success', async () => {
-    const url = 'http://localhost:5173/api/auth/callback?code=auth_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=auth_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',
@@ -189,7 +189,7 @@ describe('/api/auth/callback', () => {
         }),
     });
 
-    const url = 'http://localhost:5173/api/auth/callback?code=expired_code&state=test_state';
+    const url = 'http://localhost:5175/api/auth/callback?code=expired_code&state=test_state';
     const mockRequest = new Request(url, {
       headers: {
         Cookie: 'oauth_state=test_state; pkce_verifier=test_verifier',

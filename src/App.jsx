@@ -176,6 +176,14 @@ export default function GanttChart() {
 
   const chartRef = useRef(null);
   const chartContainerRef = useRef(null);
+  const chartHeaderRef = useRef(null);
+
+  // Sync chart header horizontal scroll with chart content
+  const handleChartScroll = useCallback(() => {
+    if (chartHeaderRef.current && chartContainerRef.current) {
+      chartHeaderRef.current.scrollLeft = chartContainerRef.current.scrollLeft;
+    }
+  }, []);
 
   // Color palette for dynamically created teams/segments
   const TEAM_COLORS = [
@@ -824,6 +832,7 @@ export default function GanttChart() {
     }
   }, [handleWheel]);
 
+
   // Persist JIRA import source to localStorage
   useEffect(() => {
     if (jiraImportSource) {
@@ -1304,34 +1313,59 @@ export default function GanttChart() {
           )}
         </div>
 
-        <div className="flex gap-4">
-          {/* Task List */}
-          <div className="w-[580px] flex-shrink-0 bg-white rounded-lg shadow-sm overflow-hidden">
-            <div className="bg-gray-50 px-4 py-3 border-b font-semibold text-gray-700 flex items-center justify-between" style={{ height: HEADER_HEIGHT }}>
-              <span>Tasks</span>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-400 font-normal flex items-center gap-1">
-                  FE/BE
-                  <span className="relative group cursor-help">
-                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="10" strokeWidth="2"/>
-                      <path strokeWidth="2" d="M12 16v-4M12 8h.01"/>
-                    </svg>
-                    <span className="fixed mt-6 ml-[-240px] w-64 px-3 py-2 text-xs bg-gray-800 text-white rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ zIndex: 9999 }}>
-                      <strong className="block mb-1">Effort is additive across hierarchy</strong>
-                      <span className="text-gray-300 block">
-                        All effort values sum up: parent + subtasks + nested subtasks. Set effort at any level and it contributes to total capacity.
-                      </span>
-                      <span className="text-gray-400 block mt-1.5 text-[10px]">
-                        Example: Phase (5/3) + Task (10/2) + Subtask (3/1) = 18/6 total
+        {/* Single scroll container for synchronized vertical scrolling */}
+        <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+          {/* Sticky header row */}
+          <div className="flex gap-4 sticky top-0 z-40">
+            {/* Task List Header */}
+            <div className="w-[580px] flex-shrink-0 bg-white rounded-t-lg shadow-sm">
+              <div className="bg-gray-50 px-4 py-3 border-b font-semibold text-gray-700 flex items-center justify-between rounded-t-lg" style={{ height: HEADER_HEIGHT }}>
+                <span>Tasks</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-400 font-normal flex items-center gap-1">
+                    FE/BE
+                    <span className="relative group cursor-help">
+                      <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="10" strokeWidth="2"/>
+                        <path strokeWidth="2" d="M12 16v-4M12 8h.01"/>
+                      </svg>
+                      <span className="fixed mt-6 ml-[-240px] w-64 px-3 py-2 text-xs bg-gray-800 text-white rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ zIndex: 9999 }}>
+                        <strong className="block mb-1">Effort is additive across hierarchy</strong>
+                        <span className="text-gray-300 block">
+                          All effort values sum up: parent + subtasks + nested subtasks. Set effort at any level and it contributes to total capacity.
+                        </span>
+                        <span className="text-gray-400 block mt-1.5 text-[10px]">
+                          Example: Phase (5/3) + Task (10/2) + Subtask (3/1) = 18/6 total
+                        </span>
                       </span>
                     </span>
                   </span>
-                </span>
-                <span className="text-xs text-gray-400 font-normal">{visibleRows.length} items</span>
+                  <span className="text-xs text-gray-400 font-normal">{visibleRows.length} items</span>
+                </div>
               </div>
             </div>
-            <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+            {/* Chart Header */}
+            <div ref={chartHeaderRef} className="flex-1 bg-white rounded-t-lg shadow-sm overflow-hidden">
+              <div className="flex border-b bg-gray-50" style={{ minWidth: totalDays * DAY_WIDTH, height: HEADER_HEIGHT }}>
+                {months.map((month, i) => (
+                  <div
+                    key={i}
+                    className="border-r px-2 py-2 text-center"
+                    style={{ width: month.days * DAY_WIDTH }}
+                  >
+                    <div className="font-semibold text-gray-700">{month.name}</div>
+                    <div className="text-xs text-gray-400">{month.days} days</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Content row */}
+          <div className="flex gap-4">
+            {/* Task List Content */}
+            <div className="w-[580px] flex-shrink-0 bg-white rounded-b-lg shadow-sm">
+              <div>
               {visibleRows.map((row) => {
                 if (row.type === 'task') {
                   const task = row.data;
@@ -1462,23 +1496,9 @@ export default function GanttChart() {
             </div>
           </div>
 
-          {/* Gantt Chart */}
-          <div ref={chartContainerRef} className="flex-1 bg-white rounded-lg shadow-sm overflow-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+          {/* Gantt Chart Content */}
+          <div ref={chartContainerRef} className="flex-1 bg-white rounded-b-lg shadow-sm overflow-x-auto" onScroll={handleChartScroll}>
             <div className="relative" style={{ minWidth: totalDays * DAY_WIDTH }}>
-              {/* Month Headers */}
-              <div className="flex border-b bg-gray-50 sticky top-0 z-10" style={{ height: HEADER_HEIGHT }}>
-                {months.map((month, i) => (
-                  <div
-                    key={i}
-                    className="border-r px-2 py-2 text-center"
-                    style={{ width: month.days * DAY_WIDTH }}
-                  >
-                    <div className="font-semibold text-gray-700">{month.name}</div>
-                    <div className="text-xs text-gray-400">{month.days} days</div>
-                  </div>
-                ))}
-              </div>
-
               {/* Chart Area */}
               <div
                 ref={chartRef}
@@ -1502,10 +1522,10 @@ export default function GanttChart() {
                 {/* Today Line */}
                 {todayOffset >= 0 && todayOffset < totalDays && (
                   <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-20"
+                    className="absolute top-0 bottom-0 w-0.5 bg-red-500/70 z-50"
                     style={{ left: todayOffset * DAY_WIDTH }}
                   >
-                    <div className="absolute -top-6 -left-8 bg-red-500 text-white text-xs px-2 py-1 rounded">
+                    <div className="absolute top-1 -left-8 bg-red-500/80 text-white text-xs px-2 py-1 rounded">
                       Today
                     </div>
                   </div>
@@ -1667,6 +1687,7 @@ export default function GanttChart() {
               </div>
             </div>
           </div>
+        </div>
         </div>
 
         {/* Legend */}

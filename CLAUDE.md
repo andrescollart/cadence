@@ -9,7 +9,7 @@ Interactive Gantt chart application for project timeline management and resource
 ## Development Commands
 
 ```bash
-npm run dev      # Start development server (Vite HMR, port 5173)
+npm run dev      # Start development server (Vite HMR, port 5175)
 npm run build    # Production build
 npm run lint     # ESLint check
 npm run preview  # Preview production build locally

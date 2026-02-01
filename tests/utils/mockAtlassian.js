@@ -121,7 +121,7 @@ export function createMockFetch(overrides = {}) {
  * Create mock request/response objects for API route testing
  */
 export function createMockRequest(options = {}) {
-  const url = new URL(options.url || 'http://localhost:5173/api/auth/login');
+  const url = new URL(options.url || 'http://localhost:5175/api/auth/login');
 
   return {
     method: options.method || 'GET',
