@@ -35,15 +35,17 @@ import {
 } from './components/inputs';
 import { ResourcePlanningSection } from './components/resources';
 import Legend from './components/Legend';
-import EmptyState from './components/EmptyState';
 import { useResourceCalculations } from './hooks';
 import AuthButton from './components/auth/AuthButton';
 import JiraImportModal from './components/modals/JiraImportModal';
 import PushToJiraModal from './components/modals/PushToJiraModal';
+import SetupWizard from './components/SetupWizard';
+import { useAuth } from './context/AuthContext.jsx';
 
 const initialTasks = [];
 
 export default function GanttChart() {
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const [tasks, setTasks] = useState(initialTasks);
   const [dependencyMode, setDependencyMode] = useState(false);
   const [dependencySource, setDependencySource] = useState(null);
@@ -1035,6 +1037,11 @@ export default function GanttChart() {
     setFilterSegment(null);
   };
 
+  // Show setup wizard if not authenticated or no tasks imported
+  if (!authLoading && (!isAuthenticated || tasks.length === 0)) {
+    return <SetupWizard onComplete={importFromJira} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-full mx-auto">
@@ -1289,9 +1296,7 @@ export default function GanttChart() {
               </div>
             </div>
             <div className="overflow-auto" style={{ maxHeight: 'calc(100vh - 340px)' }}>
-              {tasks.length === 0 ? (
-                <EmptyState onImport={() => setShowJiraImportModal(true)} />
-              ) : visibleRows.map((row) => {
+              {visibleRows.map((row) => {
                 if (row.type === 'task') {
                   const task = row.data;
                   const hasSubtasks = task.subtasks.length > 0;
