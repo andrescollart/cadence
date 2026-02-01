@@ -138,6 +138,26 @@ export default function GanttChart() {
 
   // JIRA import source tracking - for push-back functionality
   const JIRA_IMPORT_STATE_KEY = 'jira_import_state';
+  const CAPACITY_CONFIG_KEY_PREFIX = 'gantt_capacity_';
+
+  // Helper to get/save capacity config per project
+  const getCapacityKey = (cloudId, projectKey) => `${CAPACITY_CONFIG_KEY_PREFIX}${cloudId}:${projectKey}`;
+  const getSavedCapacity = (cloudId, projectKey) => {
+    try {
+      const saved = localStorage.getItem(getCapacityKey(cloudId, projectKey));
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  };
+  const saveCapacity = (cloudId, projectKey, config) => {
+    try {
+      localStorage.setItem(getCapacityKey(cloudId, projectKey), JSON.stringify(config));
+    } catch (e) {
+      console.warn('Failed to save capacity config:', e);
+    }
+  };
+
   const [jiraImportSource, setJiraImportSource] = useState(() => {
     try {
       const saved = localStorage.getItem(JIRA_IMPORT_STATE_KEY);
@@ -146,6 +166,13 @@ export default function GanttChart() {
       return null;
     }
   });
+
+  // Persist capacity config to localStorage when it changes (keyed by project)
+  useEffect(() => {
+    if (jiraImportSource?.cloudId && jiraImportSource?.projectKey) {
+      saveCapacity(jiraImportSource.cloudId, jiraImportSource.projectKey, capacityConfig);
+    }
+  }, [capacityConfig, jiraImportSource?.cloudId, jiraImportSource?.projectKey]);
 
   const chartRef = useRef(null);
   const chartContainerRef = useRef(null);
@@ -274,10 +301,16 @@ export default function GanttChart() {
         });
         setTeams(newTeams);
 
-        // Update capacity config for new teams
+        // Restore saved capacity for this project, or use defaults for new teams
+        const savedCapacity = data.cloudId && data.projectKey
+          ? getSavedCapacity(data.cloudId, data.projectKey)
+          : null;
+        const savedTeamCapacities = savedCapacity?.teamCapacities || {};
+
         const newCapacities = {};
         foundTeams.forEach(teamName => {
-          newCapacities[teamName] = { fe: 1, be: 1 };
+          // Use saved capacity if available, otherwise default to { fe: 1, be: 1 }
+          newCapacities[teamName] = savedTeamCapacities[teamName] || { fe: 1, be: 1 };
         });
         setCapacityConfig(prev => ({
           ...prev,
