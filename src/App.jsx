@@ -302,6 +302,9 @@ export default function GanttChart() {
 
       setTasks(newTasks);
 
+      // Expand top-level tasks by default (but not grandchildren)
+      setExpandedTasks(new Set(newTasks.map(t => t.id)));
+
       // Store JIRA import source for push-back functionality
       if (data.cloudId && data.projectKey) {
         setJiraImportSource({
