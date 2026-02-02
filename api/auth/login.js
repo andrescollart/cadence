@@ -19,8 +19,9 @@ export default async function handler(req, res) {
   }
 
   // Derive redirect URI from request
-  const protocol = req.headers['x-forwarded-proto'] || 'https';
   const host = req.headers.host;
+  const isLocalhost = host?.includes('localhost') || host?.includes('127.0.0.1');
+  const protocol = req.headers['x-forwarded-proto'] || (isLocalhost ? 'http' : 'https');
   const redirectUri = `${protocol}://${host}/api/auth/callback`;
 
   // Generate PKCE values

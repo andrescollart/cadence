@@ -52,8 +52,9 @@ export default async function handler(req, res) {
   const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
 
   // Derive redirect URI from request (must match what was used in login)
-  const protocol = req.headers['x-forwarded-proto'] || 'https';
   const host = req.headers.host;
+  const isLocalhost = host?.includes('localhost') || host?.includes('127.0.0.1');
+  const protocol = req.headers['x-forwarded-proto'] || (isLocalhost ? 'http' : 'https');
   const redirectUri = `${protocol}://${host}/api/auth/callback`;
 
   try {
