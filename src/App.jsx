@@ -51,6 +51,11 @@ export default function GanttChart() {
   const [dependencySource, setDependencySource] = useState(null);
   const [dragState, setDragState] = useState(null);
   const [expandedTasks, setExpandedTasks] = useState(new Set());
+  const [taskListWidth, setTaskListWidth] = useState(() => {
+    const saved = localStorage.getItem('gantt_task_list_width');
+    return saved ? parseInt(saved, 10) : 580;
+  });
+  const isResizing = useRef(false);
 
   // Calculate project bounds from task dates
   const projectBounds = useMemo(() => {
@@ -184,6 +189,38 @@ export default function GanttChart() {
       chartHeaderRef.current.scrollLeft = chartContainerRef.current.scrollLeft;
     }
   }, []);
+
+  // Resizable task list panel
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault();
+    isResizing.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  useEffect(() => {
+    const handleResizeMove = (e) => {
+      if (!isResizing.current) return;
+      const newWidth = Math.max(300, Math.min(800, e.clientX - 24)); // 24px for page padding
+      setTaskListWidth(newWidth);
+    };
+
+    const handleResizeEnd = () => {
+      if (isResizing.current) {
+        isResizing.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('gantt_task_list_width', taskListWidth.toString());
+      }
+    };
+
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+    return () => {
+      document.removeEventListener('mousemove', handleResizeMove);
+      document.removeEventListener('mouseup', handleResizeEnd);
+    };
+  }, [taskListWidth]);
 
   // Color palette for dynamically created teams/segments
   const TEAM_COLORS = [
@@ -1316,9 +1353,9 @@ export default function GanttChart() {
         {/* Single scroll container for synchronized vertical scrolling */}
         <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           {/* Sticky header row */}
-          <div className="flex gap-4 sticky top-0 z-40">
+          <div className="flex sticky top-0 z-40">
             {/* Task List Header */}
-            <div className="w-[580px] flex-shrink-0 bg-white rounded-t-lg shadow-sm">
+            <div className="flex-shrink-0 bg-white rounded-tl-lg shadow-sm" style={{ width: taskListWidth }}>
               <div className="bg-gray-50 px-4 py-3 border-b font-semibold text-gray-700 flex items-center justify-between rounded-t-lg" style={{ height: HEADER_HEIGHT }}>
                 <span>Tasks</span>
                 <div className="flex items-center gap-3">
@@ -1344,8 +1381,14 @@ export default function GanttChart() {
                 </div>
               </div>
             </div>
+            {/* Resize Handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              className="w-2 flex-shrink-0 cursor-col-resize hover:bg-blue-400 bg-gray-200 transition-colors"
+              title="Drag to resize"
+            />
             {/* Chart Header */}
-            <div ref={chartHeaderRef} className="flex-1 bg-white rounded-t-lg shadow-sm overflow-hidden">
+            <div ref={chartHeaderRef} className="flex-1 bg-white rounded-tr-lg shadow-sm overflow-hidden">
               <div className="flex border-b bg-gray-50" style={{ minWidth: totalDays * DAY_WIDTH, height: HEADER_HEIGHT }}>
                 {months.map((month, i) => (
                   <div
@@ -1362,9 +1405,9 @@ export default function GanttChart() {
           </div>
 
           {/* Content row */}
-          <div className="flex gap-4">
+          <div className="flex">
             {/* Task List Content */}
-            <div className="w-[580px] flex-shrink-0 bg-white rounded-b-lg shadow-sm">
+            <div className="flex-shrink-0 bg-white rounded-bl-lg shadow-sm" style={{ width: taskListWidth }}>
               <div>
               {visibleRows.map((row) => {
                 if (row.type === 'task') {
@@ -1495,9 +1538,13 @@ export default function GanttChart() {
               })}
             </div>
           </div>
-
-          {/* Gantt Chart Content */}
-          <div ref={chartContainerRef} className="flex-1 bg-white rounded-b-lg shadow-sm overflow-x-auto" onScroll={handleChartScroll}>
+            {/* Resize Handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              className="w-2 flex-shrink-0 cursor-col-resize hover:bg-blue-400 bg-gray-200 transition-colors"
+            />
+            {/* Gantt Chart Content */}
+            <div ref={chartContainerRef} className="flex-1 bg-white rounded-br-lg shadow-sm overflow-x-auto" onScroll={handleChartScroll}>
             <div className="relative" style={{ minWidth: totalDays * DAY_WIDTH }}>
               {/* Chart Area */}
               <div
