@@ -3,7 +3,7 @@
  */
 
 // Fields that can be pushed to JIRA
-const PUSHABLE_FIELDS = ['startDate', 'endDate', 'team', 'segments', 'feEffortDays', 'beEffortDays'];
+const PUSHABLE_FIELDS = ['startDate', 'endDate', 'team', 'segments', 'feEffortDays', 'beEffortDays', 'dependencies'];
 
 /**
  * Compare two values for equality (handles arrays and null/undefined)
@@ -38,6 +38,7 @@ export function getFieldLabel(field) {
     segments: 'Segments',
     feEffortDays: 'FE Effort',
     beEffortDays: 'BE Effort',
+    dependencies: 'Dependencies',
   };
   return labels[field] || field;
 }
@@ -58,6 +59,7 @@ export function formatFieldValue(field, value) {
         return value;
       }
     case 'segments':
+    case 'dependencies':
       if (!Array.isArray(value) || value.length === 0) return '—';
       return value.join(', ');
     case 'feEffortDays':
@@ -118,6 +120,7 @@ export function detectAllChanges(tasks, originalState) {
       segments: item.segments,
       feEffortDays: item.feEffortDays,
       beEffortDays: item.beEffortDays,
+      dependencies: item.dependencies || [],
     };
 
     const itemChanges = detectItemChanges(original, currentValues);
@@ -272,7 +275,23 @@ export function getFieldCategory(field) {
     case 'team':
     case 'segments':
       return 'assignment';
+    case 'dependencies':
+      return 'dependencies';
     default:
       return 'other';
   }
+}
+
+/**
+ * Compute dependency changes (additions and removals)
+ * Returns { added: string[], removed: string[] }
+ */
+export function computeDependencyChanges(original, current) {
+  const origDeps = new Set(original || []);
+  const currDeps = new Set(current || []);
+
+  const added = [...currDeps].filter(d => !origDeps.has(d));
+  const removed = [...origDeps].filter(d => !currDeps.has(d));
+
+  return { added, removed };
 }

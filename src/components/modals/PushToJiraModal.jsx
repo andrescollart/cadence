@@ -7,6 +7,7 @@ import {
   getFieldLabel,
   formatFieldValue,
   countChanges,
+  computeDependencyChanges,
 } from '../../utils/changeDetection.js';
 
 // Field diff display component
@@ -205,7 +206,7 @@ export default function PushToJiraModal({ isOpen, onClose, tasks, jiraImportSour
 
 // Inner component with all state - remounts when modal reopens
 function PushToJiraModalContent({ onClose, tasks, jiraImportSource, onUpdateOriginalState }) {
-  const { syncToJira } = useJira();
+  const { syncToJira, createIssueLink } = useJira();
 
   // Detect changes first to use in state initialization
   const allChanges = useMemo(() => {
@@ -341,11 +342,59 @@ function PushToJiraModalContent({ onClose, tasks, jiraImportSource, onUpdateOrig
       const change = changesToPush[i];
       setProgress({ current: i + 1, total: changesToPush.length, currentKey: change.issueKey });
 
-      try {
-        const config = buildGanttConfig(change.current, change.selectedFields);
-        const result = await syncToJira(jiraImportSource.cloudId, change.issueKey, config);
+      let hasError = false;
+      const errors = [];
 
-        if (result.success) {
+      try {
+        // Handle dependency changes (create issue links)
+        if (change.selectedFields.has('dependencies')) {
+          const depChanges = computeDependencyChanges(
+            change.original.dependencies,
+            change.current.dependencies
+          );
+
+          // Create links for added dependencies using Finish-to-Start (FS) dependency
+          // FS-depends on: This issue cannot START until the dependency FINISHES
+          // inwardIssue shows "is FS-depended by", outwardIssue shows "FS-depends on"
+          // Note: Link type name may vary by JIRA config - common names: "Dependency", "FS Dependency"
+          for (const depKey of depChanges.added) {
+            const linkResult = await createIssueLink(
+              jiraImportSource.cloudId,
+              'Blocks', // TODO: Make configurable - ideally use FS dependency type
+              depKey, // inward issue - predecessor (is depended by this issue)
+              change.issueKey // outward issue - this issue (depends on predecessor)
+            );
+            if (!linkResult.success) {
+              errors.push(`Link to ${depKey}: ${linkResult.error}`);
+              hasError = true;
+            }
+            // Rate limiting between link creations
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+
+          // Note: Removing links would require knowing the linkId, which we don't track
+          // For now, we only support adding new dependencies via JIRA links
+          if (depChanges.removed.length > 0) {
+            errors.push(`Cannot remove links (${depChanges.removed.join(', ')}) - remove manually in JIRA`);
+          }
+        }
+
+        // Handle other field changes (sync to description)
+        const nonDepFields = new Set(
+          Array.from(change.selectedFields).filter(f => f !== 'dependencies')
+        );
+
+        if (nonDepFields.size > 0) {
+          const config = buildGanttConfig(change.current, nonDepFields);
+          const result = await syncToJira(jiraImportSource.cloudId, change.issueKey, config);
+
+          if (!result.success) {
+            errors.push(result.error || 'Failed to sync config');
+            hasError = true;
+          }
+        }
+
+        if (!hasError) {
           pushResults.success.push(change.issueKey);
           // Update original state with pushed values
           newOriginalState[change.issueKey] = {
@@ -355,7 +404,7 @@ function PushToJiraModalContent({ onClose, tasks, jiraImportSource, onUpdateOrig
             ),
           };
         } else {
-          pushResults.failed.push({ issueKey: change.issueKey, error: result.error || 'Unknown error' });
+          pushResults.failed.push({ issueKey: change.issueKey, error: errors.join('; ') });
         }
       } catch (err) {
         pushResults.failed.push({ issueKey: change.issueKey, error: err.message });
@@ -424,7 +473,7 @@ function PushToJiraModalContent({ onClose, tasks, jiraImportSource, onUpdateOrig
                 <div className="px-6 py-3 bg-gray-50 border-b flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-600">Filter:</span>
-                    {['all', 'dates', 'effort', 'assignment'].map(f => (
+                    {['all', 'dates', 'effort', 'assignment', 'dependencies'].map(f => (
                       <button
                         key={f}
                         onClick={() => setFilter(f)}

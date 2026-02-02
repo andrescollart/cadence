@@ -248,7 +248,7 @@ export default function GanttChart() {
       const foundSegments = new Set();
 
       // Helper to capture original state for an item
-      const captureOriginalState = (id, startDate, endDate, team, segments, feEffortDays, beEffortDays) => {
+      const captureOriginalState = (id, startDate, endDate, team, segments, feEffortDays, beEffortDays, dependencies) => {
         originalState[id] = {
           startDate: startDate || null,
           endDate: endDate || null,
@@ -256,6 +256,7 @@ export default function GanttChart() {
           segments: segments || [],
           feEffortDays: feEffortDays || 0,
           beEffortDays: beEffortDays || 0,
+          dependencies: dependencies || [],
         };
       };
 
@@ -271,7 +272,7 @@ export default function GanttChart() {
         const taskBeEffort = config?.beEffortDays ?? issue.beEffortDays ?? 0;
 
         // Capture original state for this task
-        captureOriginalState(issue.id, issue.startDate, issue.endDate, taskTeam, taskSegments, taskFeEffort, taskBeEffort);
+        captureOriginalState(issue.id, issue.startDate, issue.endDate, taskTeam, taskSegments, taskFeEffort, taskBeEffort, issue.dependencies || []);
 
         if (taskTeam) foundTeams.add(taskTeam);
         taskSegments.forEach(s => foundSegments.add(s));
@@ -291,7 +292,7 @@ export default function GanttChart() {
             const subtaskEndDate = st.endDate || parentEndDate;
 
             // Capture original state for this subtask
-            captureOriginalState(st.id, subtaskStartDate, subtaskEndDate, stTeam, stSegments, stFeEffort, stBeEffort);
+            captureOriginalState(st.id, subtaskStartDate, subtaskEndDate, stTeam, stSegments, stFeEffort, stBeEffort, st.dependencies || []);
 
             if (stTeam) foundTeams.add(stTeam);
             stSegments.forEach(s => foundSegments.add(s));

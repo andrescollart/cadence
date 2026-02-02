@@ -144,6 +144,72 @@ export function useJira() {
     [isAuthenticated, fetchWithAuth]
   );
 
+  // Get available issue link types
+  const getLinkTypes = useCallback(
+    async (cloudId) => {
+      if (!isAuthenticated || !cloudId) return [];
+
+      try {
+        const response = await fetchWithAuth(`/api/jira/links?cloudId=${cloudId}`);
+        if (!response.ok) throw new Error('Failed to fetch link types');
+        return await response.json();
+      } catch (err) {
+        console.error('Failed to fetch link types:', err);
+        return [];
+      }
+    },
+    [isAuthenticated, fetchWithAuth]
+  );
+
+  // Create an issue link (dependency)
+  const createIssueLink = useCallback(
+    async (cloudId, linkType, inwardIssue, outwardIssue) => {
+      if (!isAuthenticated) return { success: false, error: 'Not authenticated' };
+
+      try {
+        const response = await fetchWithAuth('/api/jira/links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cloudId, linkType, inwardIssue, outwardIssue }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to create link');
+        }
+
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+    [isAuthenticated, fetchWithAuth]
+  );
+
+  // Delete an issue link
+  const deleteIssueLink = useCallback(
+    async (cloudId, linkId) => {
+      if (!isAuthenticated) return { success: false, error: 'Not authenticated' };
+
+      try {
+        const response = await fetchWithAuth(
+          `/api/jira/links?cloudId=${cloudId}&linkId=${linkId}`,
+          { method: 'DELETE' }
+        );
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to delete link');
+        }
+
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+    [isAuthenticated, fetchWithAuth]
+  );
+
   // Sync config back to JIRA
   const syncToJira = useCallback(
     async (cloudId, issueKey, config) => {
@@ -184,6 +250,9 @@ export function useJira() {
     getFields,
     getEpicDetails,
     syncToJira,
+    getLinkTypes,
+    createIssueLink,
+    deleteIssueLink,
   };
 }
 
