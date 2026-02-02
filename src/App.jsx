@@ -888,6 +888,57 @@ export default function GanttChart() {
 
   const getTaskById = (id) => tasks.find(t => t.id === id);
 
+  // Find any item (task or subtask at any depth) by ID
+  const getItemById = (id) => {
+    for (const task of tasks) {
+      if (task.id === id) return { item: task, type: 'task' };
+      const found = findInSubtasks(task.subtasks, id);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const findInSubtasks = (subtasks, id) => {
+    for (const st of subtasks) {
+      if (st.id === id) return { item: st, type: 'subtask' };
+      if (st.subtasks?.length > 0) {
+        const found = findInSubtasks(st.subtasks, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+
+  // Add dependency to any item (task or subtask)
+  const addDependencyToItem = (targetId, sourceId) => {
+    const updateDepsInSubtasks = (subtasks) => {
+      return subtasks.map(st => {
+        if (st.id === targetId) {
+          const deps = st.dependencies || [];
+          if (!deps.includes(sourceId)) {
+            return { ...st, dependencies: [...deps, sourceId] };
+          }
+          return st;
+        }
+        if (st.subtasks?.length > 0) {
+          return { ...st, subtasks: updateDepsInSubtasks(st.subtasks) };
+        }
+        return st;
+      });
+    };
+
+    setTasks(prev => prev.map(t => {
+      if (t.id === targetId) {
+        const deps = t.dependencies || [];
+        if (!deps.includes(sourceId)) {
+          return { ...t, dependencies: [...deps, sourceId] };
+        }
+        return t;
+      }
+      return { ...t, subtasks: updateDepsInSubtasks(t.subtasks) };
+    }));
+  };
+
   const updateTask = (taskId, updates) => {
     setTasks(prev => prev.map(t =>
       t.id === taskId ? { ...t, ...updates } : t
@@ -1023,36 +1074,40 @@ export default function GanttChart() {
 
   const renderDependencyLines = () => {
     const lines = [];
-    const taskRowMap = {};
+    const itemRowMap = {};
     let currentY = 0;
+
+    // Build Y position map for all visible rows (tasks and subtasks)
     visibleRows.forEach((row) => {
-      if (row.type === 'task') {
-        taskRowMap[row.data.id] = currentY + ROW_HEIGHT / 2;
-        currentY += ROW_HEIGHT;
-      } else {
-        currentY += SUBTASK_ROW_HEIGHT;
-      }
+      const rowHeight = row.type === 'task' ? ROW_HEIGHT : SUBTASK_ROW_HEIGHT;
+      itemRowMap[row.data.id] = currentY + rowHeight / 2;
+      currentY += rowHeight;
     });
 
-    filteredTasks.forEach((task) => {
-      task.dependencies.forEach(depId => {
-        const depTask = getTaskById(depId);
-        if (!depTask) return;
+    // Render dependencies for all visible rows
+    visibleRows.forEach((row) => {
+      const item = row.data;
+      const deps = item.dependencies || [];
 
-        const depPos = getTaskPosition(depTask);
-        const taskPos = getTaskPosition(task);
+      deps.forEach(depId => {
+        const depResult = getItemById(depId);
+        if (!depResult) return;
+        const depItem = depResult.item;
 
-        const y1 = taskRowMap[depId];
-        const y2 = taskRowMap[task.id];
+        const depPos = getTaskPosition(depItem);
+        const itemPos = getTaskPosition(item);
+
+        const y1 = itemRowMap[depId];
+        const y2 = itemRowMap[item.id];
         if (y1 === undefined || y2 === undefined) return;
 
         const x1 = (depPos.startDay + depPos.duration) * DAY_WIDTH;
-        const x2 = taskPos.startDay * DAY_WIDTH;
+        const x2 = itemPos.startDay * DAY_WIDTH;
 
         const midX = (x1 + x2) / 2;
 
         lines.push(
-          <g key={`${depId}-${task.id}`}>
+          <g key={`${depId}-${item.id}`}>
             <path
               d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
               fill="none"
@@ -1343,8 +1398,8 @@ export default function GanttChart() {
             <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
               <p className="text-purple-700 text-sm">
                 <strong>Dependency Mode:</strong> {dependencySource
-                  ? `Selected "${getTaskById(dependencySource)?.name}" → Click another task`
-                  : 'Click the FIRST task (predecessor), then click the SECOND task'}
+                  ? `Selected "${getItemById(dependencySource)?.item?.name}" → Click another item`
+                  : 'Click the FIRST item (predecessor), then click the SECOND item'}
               </p>
             </div>
           )}
@@ -1419,7 +1474,23 @@ export default function GanttChart() {
                   return (
                     <div
                       key={task.id}
-                      className={`px-3 border-b transition-colors hover:bg-gray-50 ${dependencySource === task.id ? 'bg-purple-50 ring-2 ring-purple-400' : ''} ${isDimmed ? 'opacity-40' : ''}`}
+                      onClick={() => {
+                        if (dependencyMode) {
+                          if (!dependencySource) {
+                            setDependencySource(task.id);
+                          } else if (dependencySource !== task.id) {
+                            setTasks(prev => prev.map(t => {
+                              if (t.id === task.id && !t.dependencies.includes(dependencySource)) {
+                                return { ...t, dependencies: [...t.dependencies, dependencySource] };
+                              }
+                              return t;
+                            }));
+                            setDependencySource(null);
+                            setDependencyMode(false);
+                          }
+                        }
+                      }}
+                      className={`px-3 border-b transition-colors ${dependencySource === task.id ? 'bg-purple-50 ring-2 ring-purple-400' : ''} ${isDimmed ? 'opacity-40' : ''} ${dependencyMode ? 'cursor-pointer hover:bg-purple-100' : 'hover:bg-gray-50'}`}
                       style={{ height: ROW_HEIGHT, display: 'flex', alignItems: 'center' }}
                     >
                       <div className="flex items-center gap-2 w-full">
@@ -1486,7 +1557,18 @@ export default function GanttChart() {
                   return (
                     <div
                       key={subtask.id}
-                      className={`px-3 border-b bg-gray-50/50 hover:bg-gray-100/50 ${isDimmed ? 'opacity-40' : ''}`}
+                      onClick={() => {
+                        if (dependencyMode) {
+                          if (!dependencySource) {
+                            setDependencySource(subtask.id);
+                          } else if (dependencySource !== subtask.id) {
+                            addDependencyToItem(subtask.id, dependencySource);
+                            setDependencySource(null);
+                            setDependencyMode(false);
+                          }
+                        }
+                      }}
+                      className={`px-3 border-b bg-gray-50/50 ${dependencySource === subtask.id ? 'bg-purple-50 ring-2 ring-purple-400' : ''} ${isDimmed ? 'opacity-40' : ''} ${dependencyMode ? 'cursor-pointer hover:bg-purple-100' : 'hover:bg-gray-100/50'}`}
                       style={{ height: SUBTASK_ROW_HEIGHT, display: 'flex', alignItems: 'center' }}
                     >
                       <div className="flex items-center gap-1.5 w-full" style={{ paddingLeft: indentPx }}>
@@ -1596,9 +1678,25 @@ export default function GanttChart() {
                         <React.Fragment key={task.id}>
                           <div
                             onMouseDown={(e) => handleTimelineMouseDown(e, idx)}
+                            onClick={() => {
+                              if (dependencyMode) {
+                                if (!dependencySource) {
+                                  setDependencySource(task.id);
+                                } else if (dependencySource !== task.id) {
+                                  setTasks(prev => prev.map(t => {
+                                    if (t.id === task.id && !t.dependencies.includes(dependencySource)) {
+                                      return { ...t, dependencies: [...t.dependencies, dependencySource] };
+                                    }
+                                    return t;
+                                  }));
+                                  setDependencySource(null);
+                                  setDependencyMode(false);
+                                }
+                              }
+                            }}
                             className={`absolute left-0 right-0 border-b transition-colors ${
                               idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
-                            } ${timelineSetMode ? 'cursor-crosshair hover:bg-green-50/50' : ''}`}
+                            } ${timelineSetMode ? 'cursor-crosshair hover:bg-green-50/50' : ''} ${dependencyMode ? 'cursor-pointer hover:bg-purple-50/50' : ''}`}
                             style={{ top: rowY, height: rowHeight }}
                           />
 
@@ -1610,27 +1708,81 @@ export default function GanttChart() {
                               height: rowHeight - 16,
                               width: barWidth,
                               zIndex: dragState?.taskId === task.id || timelineDrawing?.taskId === task.id ? 30 : 20,
-                              pointerEvents: timelineSetMode ? 'none' : 'auto'
+                              pointerEvents: timelineSetMode ? 'none' : 'auto',
+                              cursor: dependencyMode ? 'pointer' : 'default'
                             }}
                           >
                             <div
-                              onMouseDown={(e) => handleBarMouseDown(e, task, 'start')}
-                              className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/10 rounded-l-lg z-10"
+                              onMouseDown={(e) => !dependencyMode && handleBarMouseDown(e, task, 'start')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (dependencyMode) {
+                                  if (!dependencySource) {
+                                    setDependencySource(task.id);
+                                  } else if (dependencySource !== task.id) {
+                                    setTasks(prev => prev.map(t => {
+                                      if (t.id === task.id && !t.dependencies.includes(dependencySource)) {
+                                        return { ...t, dependencies: [...t.dependencies, dependencySource] };
+                                      }
+                                      return t;
+                                    }));
+                                    setDependencySource(null);
+                                    setDependencyMode(false);
+                                  }
+                                }
+                              }}
+                              className="absolute left-0 top-0 bottom-0 w-2 hover:bg-black/10 rounded-l-lg z-10"
+                              style={{ cursor: dependencyMode ? 'inherit' : 'ew-resize' }}
                             />
                             <div
-                              onMouseDown={(e) => handleBarMouseDown(e, task, 'move')}
-                              className={`w-full h-full rounded-lg shadow-sm cursor-move transition-shadow hover:shadow-md flex items-center px-3 ${
+                              onMouseDown={(e) => !dependencyMode && handleBarMouseDown(e, task, 'move')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (dependencyMode) {
+                                  if (!dependencySource) {
+                                    setDependencySource(task.id);
+                                  } else if (dependencySource !== task.id) {
+                                    setTasks(prev => prev.map(t => {
+                                      if (t.id === task.id && !t.dependencies.includes(dependencySource)) {
+                                        return { ...t, dependencies: [...t.dependencies, dependencySource] };
+                                      }
+                                      return t;
+                                    }));
+                                    setDependencySource(null);
+                                    setDependencyMode(false);
+                                  }
+                                }
+                              }}
+                              className={`w-full h-full rounded-lg shadow-sm transition-shadow hover:shadow-md flex items-center px-3 ${
                                 dependencySource === task.id ? 'ring-2 ring-purple-500' : ''
                               } ${task.status === 'Done' ? 'opacity-60' : ''}`}
-                              style={{ backgroundColor: getBarColor(task) }}
+                              style={{ backgroundColor: getBarColor(task), cursor: dependencyMode ? 'inherit' : 'move' }}
                             >
                               <span className="text-white text-sm font-medium truncate">
                                 {task.name.replace(/^Phase \d+: /, '').replace('Phase 5 Spike: ', '')}
                               </span>
                             </div>
                             <div
-                              onMouseDown={(e) => handleBarMouseDown(e, task, 'end')}
-                              className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black/10 rounded-r-lg z-10"
+                              onMouseDown={(e) => !dependencyMode && handleBarMouseDown(e, task, 'end')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (dependencyMode) {
+                                  if (!dependencySource) {
+                                    setDependencySource(task.id);
+                                  } else if (dependencySource !== task.id) {
+                                    setTasks(prev => prev.map(t => {
+                                      if (t.id === task.id && !t.dependencies.includes(dependencySource)) {
+                                        return { ...t, dependencies: [...t.dependencies, dependencySource] };
+                                      }
+                                      return t;
+                                    }));
+                                    setDependencySource(null);
+                                    setDependencyMode(false);
+                                  }
+                                }
+                              }}
+                              className="absolute right-0 top-0 bottom-0 w-2 hover:bg-black/10 rounded-r-lg z-10"
+                              style={{ cursor: dependencyMode ? 'inherit' : 'ew-resize' }}
                             />
                             {task.status === 'Done' && (
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1654,36 +1806,86 @@ export default function GanttChart() {
                         <React.Fragment key={subtask.id}>
                           <div
                             onMouseDown={(e) => handleSubtaskTimelineMouseDown(e, idx, parent.id, subtask.id)}
-                            className={`absolute left-0 right-0 border-b bg-gray-50/30 ${isDimmed ? 'opacity-40' : ''} ${timelineSetMode ? 'cursor-crosshair hover:bg-green-50/30' : ''}`}
+                            onClick={() => {
+                              if (dependencyMode) {
+                                if (!dependencySource) {
+                                  setDependencySource(subtask.id);
+                                } else if (dependencySource !== subtask.id) {
+                                  addDependencyToItem(subtask.id, dependencySource);
+                                  setDependencySource(null);
+                                  setDependencyMode(false);
+                                }
+                              }
+                            }}
+                            className={`absolute left-0 right-0 border-b bg-gray-50/30 ${dependencySource === subtask.id ? 'bg-purple-100/50' : ''} ${isDimmed ? 'opacity-40' : ''} ${timelineSetMode ? 'cursor-crosshair hover:bg-green-50/30' : ''} ${dependencyMode ? 'cursor-pointer hover:bg-purple-50/50' : ''}`}
                             style={{ top: rowY, height: rowHeight }}
                           />
                           <div
-                            className="absolute flex items-center group"
+                            className={`absolute flex items-center group ${dependencySource === subtask.id ? 'ring-2 ring-purple-500 rounded' : ''}`}
                             style={{
                               left: pos.startDay * DAY_WIDTH + 2,
                               top: rowY + 4,
                               height: rowHeight - 8,
                               width: barWidth,
                               zIndex: dragState?.taskId === subtask.id || timelineDrawing?.subtaskId === subtask.id ? 30 : 15,
-                              pointerEvents: timelineSetMode ? 'none' : 'auto'
+                              pointerEvents: timelineSetMode ? 'none' : 'auto',
+                              cursor: dependencyMode ? 'pointer' : 'default'
                             }}
                           >
                             <div
-                              onMouseDown={(e) => handleSubtaskBarMouseDown(e, parent.id, subtask, 'start')}
-                              className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-black/10 rounded-l z-10"
+                              onMouseDown={(e) => !dependencyMode && handleSubtaskBarMouseDown(e, parent.id, subtask, 'start')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (dependencyMode) {
+                                  if (!dependencySource) {
+                                    setDependencySource(subtask.id);
+                                  } else if (dependencySource !== subtask.id) {
+                                    addDependencyToItem(subtask.id, dependencySource);
+                                    setDependencySource(null);
+                                    setDependencyMode(false);
+                                  }
+                                }
+                              }}
+                              className="absolute left-0 top-0 bottom-0 w-1.5 hover:bg-black/10 rounded-l z-10"
+                              style={{ cursor: dependencyMode ? 'inherit' : 'ew-resize' }}
                             />
                             <div
-                              onMouseDown={(e) => handleSubtaskBarMouseDown(e, parent.id, subtask, 'move')}
-                              className="w-full h-full rounded shadow-sm cursor-move transition-shadow hover:shadow-md flex items-center px-2 opacity-80 hover:opacity-100"
-                              style={{ backgroundColor: subtaskColor }}
+                              onMouseDown={(e) => !dependencyMode && handleSubtaskBarMouseDown(e, parent.id, subtask, 'move')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (dependencyMode) {
+                                  if (!dependencySource) {
+                                    setDependencySource(subtask.id);
+                                  } else if (dependencySource !== subtask.id) {
+                                    addDependencyToItem(subtask.id, dependencySource);
+                                    setDependencySource(null);
+                                    setDependencyMode(false);
+                                  }
+                                }
+                              }}
+                              className="w-full h-full rounded shadow-sm transition-shadow hover:shadow-md flex items-center px-2 opacity-80 hover:opacity-100"
+                              style={{ backgroundColor: subtaskColor, cursor: dependencyMode ? 'inherit' : 'move' }}
                             >
                               <span className="text-white text-xs font-medium truncate">
                                 {subtask.name.replace(/^\d+\.\d+\s*/, '')}
                               </span>
                             </div>
                             <div
-                              onMouseDown={(e) => handleSubtaskBarMouseDown(e, parent.id, subtask, 'end')}
-                              className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-black/10 rounded-r z-10"
+                              onMouseDown={(e) => !dependencyMode && handleSubtaskBarMouseDown(e, parent.id, subtask, 'end')}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (dependencyMode) {
+                                  if (!dependencySource) {
+                                    setDependencySource(subtask.id);
+                                  } else if (dependencySource !== subtask.id) {
+                                    addDependencyToItem(subtask.id, dependencySource);
+                                    setDependencySource(null);
+                                    setDependencyMode(false);
+                                  }
+                                }
+                              }}
+                              className="absolute right-0 top-0 bottom-0 w-1.5 hover:bg-black/10 rounded-r z-10"
+                              style={{ cursor: dependencyMode ? 'inherit' : 'ew-resize' }}
                             />
                           </div>
                         </React.Fragment>
