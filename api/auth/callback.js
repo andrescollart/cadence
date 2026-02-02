@@ -1,12 +1,10 @@
-export const config = { runtime: 'edge' };
-
 const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 
 /**
  * Parse cookies from request headers
  */
-function parseCookies(request) {
-  const cookieHeader = request.headers.get('Cookie') || '';
+function parseCookies(req) {
+  const cookieHeader = req.headers.cookie || '';
   const cookies = {};
   cookieHeader.split(';').forEach((cookie) => {
     const [name, ...rest] = cookie.trim().split('=');
@@ -21,50 +19,32 @@ function parseCookies(request) {
  * Handles OAuth callback from Atlassian
  * Validates state, exchanges code for tokens, stores tokens in HTTP-only cookies
  */
-export default async function handler(request) {
-  const url = new URL(request.url);
-  const code = url.searchParams.get('code');
-  const state = url.searchParams.get('state');
-  const error = url.searchParams.get('error');
-  const errorDescription = url.searchParams.get('error_description');
+export default async function handler(req, res) {
+  const { code, state, error, error_description: errorDescription } = req.query;
 
   // Handle OAuth errors from Atlassian
   if (error) {
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: `/?auth=error&message=${encodeURIComponent(errorDescription || error)}`,
-      },
-    });
+    return res.redirect(`/?auth=error&message=${encodeURIComponent(errorDescription || error)}`);
   }
 
   // Validate required parameters
   if (!code) {
-    return new Response(JSON.stringify({ error: 'Missing authorization code' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(400).json({ error: 'Missing authorization code' });
   }
 
   // Get cookies for PKCE validation
-  const cookies = parseCookies(request);
+  const cookies = parseCookies(req);
   const storedState = cookies.oauth_state;
   const codeVerifier = cookies.pkce_verifier;
 
   // Validate state (CSRF protection)
   if (!state || state !== storedState) {
-    return new Response(JSON.stringify({ error: 'Invalid state parameter' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(400).json({ error: 'Invalid state parameter' });
   }
 
   // Validate PKCE verifier
   if (!codeVerifier) {
-    return new Response(JSON.stringify({ error: 'Missing PKCE verifier' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(400).json({ error: 'Missing PKCE verifier' });
   }
 
   // Exchange code for tokens
@@ -72,7 +52,9 @@ export default async function handler(request) {
   const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
 
   // Derive redirect URI from request (must match what was used in login)
-  const redirectUri = `${url.origin}/api/auth/callback`;
+  const protocol = req.headers['x-forwarded-proto'] || 'https';
+  const host = req.headers.host;
+  const redirectUri = `${protocol}://${host}/api/auth/callback`;
 
   try {
     const tokenResponse = await fetch(ATLASSIAN_TOKEN_URL, {
@@ -93,12 +75,9 @@ export default async function handler(request) {
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.json();
       console.error('Token exchange failed:', errorData);
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: `/?auth=error&message=${encodeURIComponent(errorData.error_description || 'Token exchange failed')}`,
-        },
-      });
+      return res.redirect(
+        `/?auth=error&message=${encodeURIComponent(errorData.error_description || 'Token exchange failed')}`
+      );
     }
 
     const tokens = await tokenResponse.json();
@@ -128,29 +107,18 @@ export default async function handler(request) {
     // Clear PKCE cookies
     const clearCookieOptions = ['Path=/', 'Max-Age=0'].join('; ');
 
-    // Build response with cookies
-    const headers = new Headers();
-    headers.set('Location', '/?auth=success');
-    headers.append('Set-Cookie', `access_token=${tokens.access_token}; ${accessTokenOptions}`);
-    headers.append('Set-Cookie', `refresh_token=${tokens.refresh_token}; ${refreshTokenOptions}`);
-    headers.append(
-      'Set-Cookie',
-      `token_expires=${Date.now() + tokens.expires_in * 1000}; ${accessTokenOptions}`
-    );
-    headers.append('Set-Cookie', `pkce_verifier=; ${clearCookieOptions}`);
-    headers.append('Set-Cookie', `oauth_state=; ${clearCookieOptions}`);
+    // Set cookies and redirect
+    res.setHeader('Set-Cookie', [
+      `access_token=${tokens.access_token}; ${accessTokenOptions}`,
+      `refresh_token=${tokens.refresh_token}; ${refreshTokenOptions}`,
+      `token_expires=${Date.now() + tokens.expires_in * 1000}; ${accessTokenOptions}`,
+      `pkce_verifier=; ${clearCookieOptions}`,
+      `oauth_state=; ${clearCookieOptions}`,
+    ]);
 
-    return new Response(null, {
-      status: 302,
-      headers,
-    });
+    res.redirect('/?auth=success');
   } catch (err) {
     console.error('OAuth callback error:', err);
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: `/?auth=error&message=${encodeURIComponent('Authentication failed')}`,
-      },
-    });
+    res.redirect(`/?auth=error&message=${encodeURIComponent('Authentication failed')}`);
   }
 }

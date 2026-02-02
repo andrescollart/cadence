@@ -1,28 +1,20 @@
-export const config = { runtime: 'edge' };
-
-import {
-  getAccessToken,
-  unauthorizedResponse,
-  jsonResponse,
-  atlassianFetch,
-} from './_auth.js';
+import { getAccessToken, atlassianFetch } from './_auth.js';
 
 /**
  * Get projects for a specific Atlassian cloud site
  * Query params: cloudId (required)
  */
-export default async function handler(request) {
-  const accessToken = getAccessToken(request);
+export default async function handler(req, res) {
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const url = new URL(request.url);
-  const cloudId = url.searchParams.get('cloudId');
+  const { cloudId } = req.query;
 
   if (!cloudId) {
-    return jsonResponse({ error: 'Missing cloudId parameter' }, 400);
+    return res.status(400).json({ error: 'Missing cloudId parameter' });
   }
 
   try {
@@ -30,7 +22,7 @@ export default async function handler(request) {
     const data = await atlassianFetch(accessToken, projectsUrl);
 
     // Return simplified project list
-    return jsonResponse(
+    return res.status(200).json(
       data.values.map((project) => ({
         id: project.id,
         key: project.key,
@@ -41,6 +33,6 @@ export default async function handler(request) {
     );
   } catch (err) {
     console.error('Failed to fetch projects:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }

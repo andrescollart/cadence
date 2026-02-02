@@ -1,6 +1,4 @@
-export const config = { runtime: 'edge' };
-
-import { getAccessToken, unauthorizedResponse, jsonResponse } from './_auth.js';
+import { getAccessToken } from './_auth.js';
 
 /**
  * JIRA Issue Links API
@@ -9,34 +7,32 @@ import { getAccessToken, unauthorizedResponse, jsonResponse } from './_auth.js';
  * POST: Create an issue link
  * DELETE: Remove an issue link
  */
-export default async function handler(request) {
-  const accessToken = getAccessToken(request);
+export default async function handler(req, res) {
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const url = new URL(request.url);
-
-  if (request.method === 'GET') {
-    return handleGetLinkTypes(accessToken, url);
-  } else if (request.method === 'POST') {
-    return handleCreateLink(accessToken, request);
-  } else if (request.method === 'DELETE') {
-    return handleDeleteLink(accessToken, url);
+  if (req.method === 'GET') {
+    return handleGetLinkTypes(accessToken, req, res);
+  } else if (req.method === 'POST') {
+    return handleCreateLink(accessToken, req, res);
+  } else if (req.method === 'DELETE') {
+    return handleDeleteLink(accessToken, req, res);
   }
 
-  return jsonResponse({ error: 'Method not allowed' }, 405);
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 /**
  * Get available issue link types
  */
-async function handleGetLinkTypes(accessToken, url) {
-  const cloudId = url.searchParams.get('cloudId');
+async function handleGetLinkTypes(accessToken, req, res) {
+  const { cloudId } = req.query;
 
   if (!cloudId) {
-    return jsonResponse({ error: 'Missing cloudId' }, 400);
+    return res.status(400).json({ error: 'Missing cloudId' });
   }
 
   try {
@@ -53,10 +49,10 @@ async function handleGetLinkTypes(accessToken, url) {
     }
 
     const data = await response.json();
-    return jsonResponse(data.issueLinkTypes || []);
+    return res.status(200).json(data.issueLinkTypes || []);
   } catch (err) {
     console.error('Failed to get link types:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }
 
@@ -68,13 +64,12 @@ async function handleGetLinkTypes(accessToken, url) {
  * inwardIssue: The issue key that is blocked/depends (e.g., "PROJ-456")
  * outwardIssue: The issue key that blocks/is depended on (e.g., "PROJ-123")
  */
-async function handleCreateLink(accessToken, request) {
+async function handleCreateLink(accessToken, req, res) {
   try {
-    const body = await request.json();
-    const { cloudId, linkType, inwardIssue, outwardIssue } = body;
+    const { cloudId, linkType, inwardIssue, outwardIssue } = req.body;
 
     if (!cloudId || !linkType || !inwardIssue || !outwardIssue) {
-      return jsonResponse({ error: 'Missing required fields' }, 400);
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
     const baseUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`;
@@ -96,10 +91,10 @@ async function handleCreateLink(accessToken, request) {
       throw new Error(error.errorMessages?.[0] || `Failed to create link: ${response.status}`);
     }
 
-    return jsonResponse({ success: true, inwardIssue, outwardIssue });
+    return res.status(200).json({ success: true, inwardIssue, outwardIssue });
   } catch (err) {
     console.error('Failed to create issue link:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }
 
@@ -107,12 +102,11 @@ async function handleCreateLink(accessToken, request) {
  * Delete an issue link
  * Query params: cloudId, linkId
  */
-async function handleDeleteLink(accessToken, url) {
-  const cloudId = url.searchParams.get('cloudId');
-  const linkId = url.searchParams.get('linkId');
+async function handleDeleteLink(accessToken, req, res) {
+  const { cloudId, linkId } = req.query;
 
   if (!cloudId || !linkId) {
-    return jsonResponse({ error: 'Missing cloudId or linkId' }, 400);
+    return res.status(400).json({ error: 'Missing cloudId or linkId' });
   }
 
   try {
@@ -129,9 +123,9 @@ async function handleDeleteLink(accessToken, url) {
       throw new Error(error.errorMessages?.[0] || `Failed to delete link: ${response.status}`);
     }
 
-    return jsonResponse({ success: true, linkId });
+    return res.status(200).json({ success: true, linkId });
   } catch (err) {
     console.error('Failed to delete issue link:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }

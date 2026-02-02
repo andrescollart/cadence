@@ -1,28 +1,20 @@
-export const config = { runtime: 'edge' };
-
-import {
-  getAccessToken,
-  unauthorizedResponse,
-  jsonResponse,
-} from './_auth.js';
+import { getAccessToken } from './_auth.js';
 
 /**
  * Get available fields from JIRA, filtered to date-like fields
  * Query params: cloudId (required), projectKey (optional - for sample values)
  */
-export default async function handler(request) {
-  const accessToken = getAccessToken(request);
+export default async function handler(req, res) {
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const url = new URL(request.url);
-  const cloudId = url.searchParams.get('cloudId');
-  const projectKey = url.searchParams.get('projectKey');
+  const { cloudId, projectKey } = req.query;
 
   if (!cloudId) {
-    return jsonResponse({ error: 'Missing cloudId parameter' }, 400);
+    return res.status(400).json({ error: 'Missing cloudId parameter' });
   }
 
   try {
@@ -44,31 +36,32 @@ export default async function handler(request) {
     const allFields = await response.json();
 
     // Filter to date fields and commonly useful fields
-    let dateFields = allFields.filter(field => {
-      const schema = field.schema;
-      if (!schema) return false;
+    let dateFields = allFields
+      .filter((field) => {
+        const schema = field.schema;
+        if (!schema) return false;
 
-      // Include date and datetime fields
-      if (schema.type === 'date' || schema.type === 'datetime') return true;
+        // Include date and datetime fields
+        if (schema.type === 'date' || schema.type === 'datetime') return true;
 
-      // Include fields with "date" in the name
-      if (field.name.toLowerCase().includes('date')) return true;
+        // Include fields with "date" in the name
+        if (field.name.toLowerCase().includes('date')) return true;
 
-      return false;
-    }).map(field => ({
-      id: field.id,
-      key: field.key,
-      name: field.name,
-      type: field.schema?.type || 'unknown',
-      custom: field.custom || false,
-      sample: null,
-    }));
+        return false;
+      })
+      .map((field) => ({
+        id: field.id,
+        key: field.key,
+        name: field.name,
+        type: field.schema?.type || 'unknown',
+        custom: field.custom || false,
+        sample: null,
+      }));
 
     // If projectKey provided, fetch sample issues to get example values
     if (projectKey) {
       try {
         // Fetch a few recent issues with date fields populated
-        const fieldIds = dateFields.map(f => f.id).join(',');
         const searchResponse = await fetch(`${baseUrl}/search/jql`, {
           method: 'POST',
           headers: {
@@ -78,7 +71,7 @@ export default async function handler(request) {
           },
           body: JSON.stringify({
             jql: `project = ${projectKey} ORDER BY updated DESC`,
-            fields: dateFields.map(f => f.id),
+            fields: dateFields.map((f) => f.id),
             maxResults: 10,
           }),
         });
@@ -88,7 +81,7 @@ export default async function handler(request) {
           const issues = searchData.issues || [];
 
           // For each field, find the first non-null sample value
-          dateFields = dateFields.map(field => {
+          dateFields = dateFields.map((field) => {
             for (const issue of issues) {
               const value = issue.fields[field.id];
               if (value) {
@@ -118,9 +111,9 @@ export default async function handler(request) {
 
     console.log(`Found ${dateFields.length} date fields`);
 
-    return jsonResponse(dateFields);
+    return res.status(200).json(dateFields);
   } catch (err) {
     console.error('Failed to fetch fields:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }

@@ -1,12 +1,12 @@
 /**
- * Shared authentication utilities for JIRA API routes
+ * Shared authentication utilities for JIRA API routes (Node.js serverless)
  */
 
 /**
  * Parse cookies from request headers
  */
-export function parseCookies(request) {
-  const cookieHeader = request.headers.get('Cookie') || '';
+export function parseCookies(req) {
+  const cookieHeader = req.headers.cookie || '';
   const cookies = {};
   cookieHeader.split(';').forEach((cookie) => {
     const [name, ...rest] = cookie.trim().split('=');
@@ -21,29 +21,9 @@ export function parseCookies(request) {
  * Get access token from request cookies
  * Returns null if not authenticated
  */
-export function getAccessToken(request) {
-  const cookies = parseCookies(request);
+export function getAccessToken(req) {
+  const cookies = parseCookies(req);
   return cookies.access_token || null;
-}
-
-/**
- * Create an unauthorized response
- */
-export function unauthorizedResponse() {
-  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-    status: 401,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-/**
- * Create a JSON response
- */
-export function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 /**

@@ -1,5 +1,3 @@
-export const config = { runtime: 'edge' };
-
 import {
   generateCodeVerifier,
   generateCodeChallenge,
@@ -12,20 +10,18 @@ const ATLASSIAN_AUTH_URL = 'https://auth.atlassian.com/authorize';
  * Initiates Atlassian OAuth 2.0 authorization flow with PKCE
  * Sets HTTP-only cookies for PKCE verifier and state, then redirects to Atlassian
  */
-export default async function handler(request) {
+export default async function handler(req, res) {
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
   const scopes = process.env.ATLASSIAN_SCOPES || 'read:jira-work offline_access';
 
   if (!clientId) {
-    return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(500).json({ error: 'OAuth not configured' });
   }
 
   // Derive redirect URI from request
-  const url = new URL(request.url);
-  const redirectUri = `${url.origin}/api/auth/callback`;
+  const protocol = req.headers['x-forwarded-proto'] || 'https';
+  const host = req.headers.host;
+  const redirectUri = `${protocol}://${host}/api/auth/callback`;
 
   // Generate PKCE values
   const codeVerifier = generateCodeVerifier();
@@ -56,14 +52,11 @@ export default async function handler(request) {
     .filter(Boolean)
     .join('; ');
 
-  // Create response with redirect and cookies
-  const headers = new Headers();
-  headers.set('Location', authUrl.toString());
-  headers.append('Set-Cookie', `pkce_verifier=${codeVerifier}; ${cookieOptions}`);
-  headers.append('Set-Cookie', `oauth_state=${state}; ${cookieOptions}`);
+  // Set cookies and redirect
+  res.setHeader('Set-Cookie', [
+    `pkce_verifier=${codeVerifier}; ${cookieOptions}`,
+    `oauth_state=${state}; ${cookieOptions}`,
+  ]);
 
-  return new Response(null, {
-    status: 302,
-    headers,
-  });
+  res.redirect(302, authUrl.toString());
 }

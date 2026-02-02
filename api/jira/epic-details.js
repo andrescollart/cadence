@@ -1,10 +1,4 @@
-export const config = { runtime: 'edge' };
-
-import {
-  getAccessToken,
-  unauthorizedResponse,
-  jsonResponse,
-} from './_auth.js';
+import { getAccessToken } from './_auth.js';
 
 /**
  * Search JIRA issues using the POST /search/jql endpoint
@@ -63,34 +57,32 @@ async function fetchIssueLinks(accessToken, baseUrl, issueKey) {
  * Get full details for specific epics including nested children (grandchildren)
  * Query params: cloudId (required), epicKeys (required, comma-separated)
  */
-export default async function handler(request) {
-  const accessToken = getAccessToken(request);
+export default async function handler(req, res) {
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const url = new URL(request.url);
-  const cloudId = url.searchParams.get('cloudId');
-  const epicKeys = url.searchParams.get('epicKeys');
-  const startDateField = url.searchParams.get('startDateField') || null;
-  const endDateField = url.searchParams.get('endDateField') || 'duedate';
+  const { cloudId, epicKeys, startDateField, endDateField = 'duedate' } = req.query;
 
   if (!cloudId || !epicKeys) {
-    return jsonResponse({ error: 'Missing cloudId or epicKeys parameter' }, 400);
+    return res.status(400).json({ error: 'Missing cloudId or epicKeys parameter' });
   }
 
-
-  const epicKeyList = epicKeys.split(',').map(k => k.trim()).filter(Boolean);
+  const epicKeyList = epicKeys
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean);
   if (epicKeyList.length === 0) {
-    return jsonResponse({ error: 'No valid epic keys provided' }, 400);
+    return res.status(400).json({ error: 'No valid epic keys provided' });
   }
 
   try {
     const baseUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`;
 
     // Helper to add delay between requests
-    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     // Helper to extract dependencies from issue links
     // Looks for "Blocks" type links where this issue is the outward issue (is blocked by)
@@ -121,12 +113,7 @@ export default async function handler(request) {
         if (startDateField && !fields.includes(startDateField)) fields.push(startDateField);
         if (endDateField && !fields.includes(endDateField)) fields.push(endDateField);
 
-        const childrenData = await jiraSearch(
-          accessToken,
-          baseUrl,
-          childrenJql,
-          fields
-        );
+        const childrenData = await jiraSearch(accessToken, baseUrl, childrenJql, fields);
 
         return childrenData.issues || [];
       } catch (err) {
@@ -158,12 +145,7 @@ export default async function handler(request) {
       if (endDateField && !epicFields.includes(endDateField)) epicFields.push(endDateField);
 
       // Fetch the epic itself
-      const epicData = await jiraSearch(
-        accessToken,
-        baseUrl,
-        `key = ${epicKey}`,
-        epicFields
-      );
+      const epicData = await jiraSearch(accessToken, baseUrl, `key = ${epicKey}`, epicFields);
 
       if (!epicData.issues || epicData.issues.length === 0) {
         console.warn(`Epic ${epicKey} not found`);
@@ -237,7 +219,7 @@ export default async function handler(request) {
 
       const epicDates = {
         startDate: startDateField ? epic.fields[startDateField] : null,
-        endDate: endDateField ? epic.fields[endDateField] : epic.fields.duedate
+        endDate: endDateField ? epic.fields[endDateField] : epic.fields.duedate,
       };
 
       // Fetch issue links for epic
@@ -257,9 +239,9 @@ export default async function handler(request) {
       });
     }
 
-    return jsonResponse(epicsWithFullHierarchy);
+    return res.status(200).json(epicsWithFullHierarchy);
   } catch (err) {
     console.error('Failed to fetch epic details:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }

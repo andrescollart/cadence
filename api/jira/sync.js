@@ -1,29 +1,26 @@
-export const config = { runtime: 'edge' };
-
-import { getAccessToken, unauthorizedResponse, jsonResponse } from './_auth.js';
+import { getAccessToken } from './_auth.js';
 import { appendGanttConfig, parseGanttConfig } from '../../src/utils/ganttConfig.js';
 
 /**
  * Sync GANTT_CONFIG back to JIRA issue description
  * POST body: { cloudId, issueKey, config }
  */
-export default async function handler(request) {
-  if (request.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const accessToken = getAccessToken(request);
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-    const body = await request.json();
-    const { cloudId, issueKey, config } = body;
+    const { cloudId, issueKey, config } = req.body;
 
     if (!cloudId || !issueKey || !config) {
-      return jsonResponse({ error: 'Missing cloudId, issueKey, or config' }, 400);
+      return res.status(400).json({ error: 'Missing cloudId, issueKey, or config' });
     }
 
     const baseUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`;
@@ -83,10 +80,10 @@ export default async function handler(request) {
       throw new Error(error.errorMessages?.[0] || `Update failed: ${updateResponse.status}`);
     }
 
-    return jsonResponse({ success: true, issueKey });
+    return res.status(200).json({ success: true, issueKey });
   } catch (err) {
     console.error('Failed to sync to JIRA:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }
 

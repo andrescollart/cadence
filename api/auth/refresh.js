@@ -1,12 +1,10 @@
-export const config = { runtime: 'edge' };
-
 const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 
 /**
  * Parse cookies from request headers
  */
-function parseCookies(request) {
-  const cookieHeader = request.headers.get('Cookie') || '';
+function parseCookies(req) {
+  const cookieHeader = req.headers.cookie || '';
   const cookies = {};
   cookieHeader.split(';').forEach((cookie) => {
     const [name, ...rest] = cookie.trim().split('=');
@@ -20,15 +18,12 @@ function parseCookies(request) {
 /**
  * Refreshes the access token using the refresh token
  */
-export default async function handler(request) {
-  const cookies = parseCookies(request);
+export default async function handler(req, res) {
+  const cookies = parseCookies(req);
   const refreshToken = cookies.refresh_token;
 
   if (!refreshToken) {
-    return new Response(JSON.stringify({ error: 'No refresh token' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return res.status(401).json({ error: 'No refresh token' });
   }
 
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
@@ -51,10 +46,7 @@ export default async function handler(request) {
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.json();
       console.error('Token refresh failed:', errorData);
-      return new Response(JSON.stringify({ error: 'Token refresh failed' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return res.status(401).json({ error: 'Token refresh failed' });
     }
 
     const tokens = await tokenResponse.json();
@@ -81,26 +73,19 @@ export default async function handler(request) {
       .filter(Boolean)
       .join('; ');
 
-    const headers = new Headers();
-    headers.set('Content-Type', 'application/json');
-    headers.append('Set-Cookie', `access_token=${tokens.access_token}; ${accessTokenOptions}`);
-    if (tokens.refresh_token) {
-      headers.append('Set-Cookie', `refresh_token=${tokens.refresh_token}; ${refreshTokenOptions}`);
-    }
-    headers.append(
-      'Set-Cookie',
-      `token_expires=${Date.now() + tokens.expires_in * 1000}; ${accessTokenOptions}`
-    );
+    const cookiesToSet = [
+      `access_token=${tokens.access_token}; ${accessTokenOptions}`,
+      `token_expires=${Date.now() + tokens.expires_in * 1000}; ${accessTokenOptions}`,
+    ];
 
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers,
-    });
+    if (tokens.refresh_token) {
+      cookiesToSet.push(`refresh_token=${tokens.refresh_token}; ${refreshTokenOptions}`);
+    }
+
+    res.setHeader('Set-Cookie', cookiesToSet);
+    res.status(200).json({ success: true });
   } catch (err) {
     console.error('Token refresh error:', err);
-    return new Response(JSON.stringify({ error: 'Token refresh failed' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    res.status(500).json({ error: 'Token refresh failed' });
   }
 }

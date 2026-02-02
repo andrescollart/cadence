@@ -1,10 +1,11 @@
 /**
  * Vite plugin to handle API routes in development
- * Simulates Vercel serverless functions locally
+ * Simulates Vercel serverless functions locally (Node.js runtime)
  */
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { readFileSync, existsSync } from 'fs';
+import { parse as parseUrl } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,6 +25,14 @@ function loadEnvFile() {
   } catch {
     console.warn('No .env.local file found');
   }
+}
+
+/**
+ * Parse query string into object
+ */
+function parseQuery(url) {
+  const parsed = parseUrl(url, true);
+  return parsed.query || {};
 }
 
 export default function viteApiPlugin() {
@@ -51,7 +60,8 @@ export default function viteApiPlugin() {
             if (!existsSync(handlerPath)) {
               throw new Error(`File not found: ${handlerPath}`);
             }
-            const module = await import(`file://${handlerPath}`);
+            // Add cache busting for development
+            const module = await import(`file://${handlerPath}?t=${Date.now()}`);
             handler = module.default;
           } catch (err) {
             console.error(`API route not found: ${handlerPath}`, err.message);
@@ -61,53 +71,66 @@ export default function viteApiPlugin() {
             return;
           }
 
-          // Create a Request object from the Node.js request
-          const protocol = req.headers['x-forwarded-proto'] || 'http';
-          const host = req.headers.host || 'localhost:5175';
-          const fullUrl = `${protocol}://${host}${req.url}`;
-
-          // Read body for POST requests
+          // Read body for POST/PUT requests
           let body = null;
           if (req.method === 'POST' || req.method === 'PUT') {
-            body = await new Promise((resolve) => {
+            const rawBody = await new Promise((resolve) => {
               let data = '';
               req.on('data', (chunk) => (data += chunk));
               req.on('end', () => resolve(data));
             });
-          }
-
-          const request = new Request(fullUrl, {
-            method: req.method,
-            headers: req.headers,
-            body: body,
-          });
-
-          // Call the handler
-          const response = await handler(request);
-
-          // Write the response
-          res.statusCode = response.status;
-
-          // Copy headers
-          response.headers.forEach((value, key) => {
-            if (key.toLowerCase() === 'set-cookie') {
-              // Handle multiple Set-Cookie headers
-              const existing = res.getHeader('Set-Cookie') || [];
-              const cookies = Array.isArray(existing) ? existing : [existing];
-              cookies.push(value);
-              res.setHeader('Set-Cookie', cookies);
-            } else {
-              res.setHeader(key, value);
+            try {
+              body = rawBody ? JSON.parse(rawBody) : null;
+            } catch {
+              body = rawBody;
             }
-          });
-
-          // Write body if not a redirect
-          if (response.status !== 302 && response.status !== 301) {
-            const text = await response.text();
-            res.end(text);
-          } else {
-            res.end();
           }
+
+          // Augment req with Vercel-like properties
+          req.query = parseQuery(req.url);
+          req.body = body;
+
+          // Create Vercel-like response helpers
+          let statusCode = 200;
+          const responseHeaders = {};
+
+          const mockRes = {
+            status(code) {
+              statusCode = code;
+              return this;
+            },
+            json(data) {
+              res.statusCode = statusCode;
+              res.setHeader('Content-Type', 'application/json');
+              Object.entries(responseHeaders).forEach(([key, value]) => {
+                res.setHeader(key, value);
+              });
+              res.end(JSON.stringify(data));
+            },
+            redirect(codeOrUrl, url) {
+              if (typeof codeOrUrl === 'string') {
+                res.statusCode = 302;
+                res.setHeader('Location', codeOrUrl);
+              } else {
+                res.statusCode = codeOrUrl;
+                res.setHeader('Location', url);
+              }
+              Object.entries(responseHeaders).forEach(([key, value]) => {
+                res.setHeader(key, value);
+              });
+              res.end();
+            },
+            setHeader(name, value) {
+              responseHeaders[name] = value;
+              res.setHeader(name, value);
+            },
+            getHeader(name) {
+              return responseHeaders[name];
+            },
+          };
+
+          // Call the handler with Node.js-style (req, res)
+          await handler(req, mockRes);
         } catch (err) {
           console.error('API error:', err);
           res.statusCode = 500;

@@ -1,29 +1,22 @@
-export const config = { runtime: 'edge' };
-
-import {
-  getAccessToken,
-  unauthorizedResponse,
-  jsonResponse,
-  atlassianFetch,
-} from './_auth.js';
+import { getAccessToken, atlassianFetch } from './_auth.js';
 
 const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessible-resources';
 
 /**
  * Get accessible Atlassian resources (sites) for the authenticated user
  */
-export default async function handler(request) {
-  const accessToken = getAccessToken(request);
+export default async function handler(req, res) {
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
     const resources = await atlassianFetch(accessToken, ATLASSIAN_RESOURCES_URL);
 
     // Return simplified resource list
-    return jsonResponse(
+    return res.status(200).json(
       resources.map((resource) => ({
         id: resource.id,
         name: resource.name,
@@ -33,6 +26,6 @@ export default async function handler(request) {
     );
   } catch (err) {
     console.error('Failed to fetch resources:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }

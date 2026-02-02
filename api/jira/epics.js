@@ -1,10 +1,4 @@
-export const config = { runtime: 'edge' };
-
-import {
-  getAccessToken,
-  unauthorizedResponse,
-  jsonResponse,
-} from './_auth.js';
+import { getAccessToken } from './_auth.js';
 
 /**
  * Search JIRA issues using the new /search/jql POST endpoint
@@ -37,19 +31,17 @@ async function jiraSearch(accessToken, baseUrl, jql, fields = [], maxResults = 1
  * Get epics and their child issues for a project
  * Query params: cloudId (required), projectKey (required)
  */
-export default async function handler(request) {
-  const accessToken = getAccessToken(request);
+export default async function handler(req, res) {
+  const accessToken = getAccessToken(req);
 
   if (!accessToken) {
-    return unauthorizedResponse();
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const url = new URL(request.url);
-  const cloudId = url.searchParams.get('cloudId');
-  const projectKey = url.searchParams.get('projectKey');
+  const { cloudId, projectKey } = req.query;
 
   if (!cloudId || !projectKey) {
-    return jsonResponse({ error: 'Missing cloudId or projectKey parameter' }, 400);
+    return res.status(400).json({ error: 'Missing cloudId or projectKey parameter' });
   }
 
   try {
@@ -78,9 +70,9 @@ export default async function handler(request) {
       children: [], // Children fetched separately via epic-details endpoint
     }));
 
-    return jsonResponse(epicsWithChildren);
+    return res.status(200).json(epicsWithChildren);
   } catch (err) {
     console.error('Failed to fetch epics:', err);
-    return jsonResponse({ error: err.message }, 500);
+    return res.status(500).json({ error: err.message });
   }
 }
