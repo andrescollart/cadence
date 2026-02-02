@@ -197,6 +197,7 @@ export default function JiraImportModal({ isOpen, onClose, onImport }) {
           segments: config.segments || [],
           feEffortDays: config.feEffortDays,
           beEffortDays: config.beEffortDays,
+          dependencies: issue.dependencies || [],
           subtasks: (issue.children || []).map(child => transformIssue(child, depth + 1)),
         };
       };

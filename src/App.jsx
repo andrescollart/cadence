@@ -307,6 +307,7 @@ export default function GanttChart() {
               endDate: subtaskEndDate,
               feEffortDays: stFeEffort,
               beEffortDays: stBeEffort,
+              dependencies: st.dependencies || [],
               subtasks: buildSubtasks(st.subtasks, subtaskStartDate, subtaskEndDate),
             };
           });

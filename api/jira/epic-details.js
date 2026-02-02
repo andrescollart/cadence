@@ -5,7 +5,7 @@ import {
 } from './_auth.js';
 
 /**
- * Search JIRA issues using the new /search/jql POST endpoint
+ * Search JIRA issues using the POST /search/jql endpoint
  */
 async function jiraSearch(accessToken, baseUrl, jql, fields = [], maxResults = 100) {
   const response = await fetch(`${baseUrl}/search/jql`, {
@@ -29,6 +29,32 @@ async function jiraSearch(accessToken, baseUrl, jql, fields = [], maxResults = 1
   }
 
   return response.json();
+}
+
+/**
+ * Fetch issue links for a specific issue using the issue endpoint
+ */
+async function fetchIssueLinks(accessToken, baseUrl, issueKey) {
+  try {
+    const response = await fetch(`${baseUrl}/issue/${issueKey}?fields=issuelinks`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`Failed to fetch links for ${issueKey}: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    return data.fields?.issuelinks || [];
+  } catch (err) {
+    console.warn(`Error fetching links for ${issueKey}:`, err.message);
+    return [];
+  }
 }
 
 /**
@@ -64,6 +90,23 @@ export default async function handler(request) {
     // Helper to add delay between requests
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+    // Helper to extract dependencies from issue links
+    // Looks for "Blocks" type links where this issue is the outward issue (is blocked by)
+    function extractDependencies(issuelinks) {
+      if (!issuelinks || !Array.isArray(issuelinks)) return [];
+
+      const dependencies = [];
+      for (const link of issuelinks) {
+        // If this issue has an inwardIssue in a "Blocks" link,
+        // it means this issue "is blocked by" the inward issue
+        if (link.type?.name === 'Blocks' && link.inwardIssue?.key) {
+          dependencies.push(link.inwardIssue.key);
+        }
+      }
+
+      return dependencies;
+    }
+
     // Helper function to fetch children with retry on rate limit
     async function fetchChildren(parentKey, useEpicLink = false, retries = 3) {
       try {
@@ -71,6 +114,7 @@ export default async function handler(request) {
           ? `"Epic Link" = ${parentKey} ORDER BY created ASC`
           : `parent = ${parentKey} ORDER BY created ASC`;
         // Build fields list including the configured date fields
+        // Note: issuelinks doesn't work with POST /search/jql, we fetch them separately
         const fields = ['summary', 'description', 'status', 'issuetype', 'created', 'duedate'];
         if (startDateField && !fields.includes(startDateField)) fields.push(startDateField);
         if (endDateField && !fields.includes(endDateField)) fields.push(endDateField);
@@ -81,6 +125,7 @@ export default async function handler(request) {
           childrenJql,
           fields
         );
+
         return childrenData.issues || [];
       } catch (err) {
         // Retry on rate limit
@@ -105,6 +150,7 @@ export default async function handler(request) {
       console.log(`Fetching full hierarchy for ${epicKey}...`);
 
       // Build fields list including the configured date fields
+      // Note: issuelinks doesn't work with POST /search/jql, we fetch them separately
       const epicFields = ['summary', 'description', 'status', 'created', 'duedate'];
       if (startDateField && !epicFields.includes(startDateField)) epicFields.push(startDateField);
       if (endDateField && !epicFields.includes(endDateField)) epicFields.push(endDateField);
@@ -130,19 +176,45 @@ export default async function handler(request) {
       const childIssues = await fetchChildren(epicKey);
       await delay(100);
 
-      // For each child, fetch grandchildren (sequentially to avoid rate limits)
+      // Helper to extract dates from JIRA fields using configured field IDs
+      const extractDates = (fields) => {
+        const startDate = startDateField ? fields[startDateField] : null;
+        const endDate = endDateField ? fields[endDateField] : fields.duedate;
+        return { startDate, endDate };
+      };
+
+      // For each child, fetch grandchildren and issue links (sequentially to avoid rate limits)
       const children = [];
       for (const child of childIssues) {
         const grandchildIssues = await fetchChildren(child.key);
 
-        // Helper to extract dates from JIRA fields using configured field IDs
-        const extractDates = (fields) => {
-          const startDate = startDateField ? fields[startDateField] : null;
-          const endDate = endDateField ? fields[endDateField] : fields.duedate;
-          return { startDate, endDate };
-        };
+        // Fetch issue links separately using the issue endpoint
+        const childLinks = await fetchIssueLinks(accessToken, baseUrl, child.key);
+        await delay(50);
 
         const childDates = extractDates(child.fields);
+
+        // Build grandchildren with their links
+        const grandchildren = [];
+        for (const gc of grandchildIssues) {
+          const gcLinks = await fetchIssueLinks(accessToken, baseUrl, gc.key);
+          await delay(50);
+
+          const gcDates = extractDates(gc.fields);
+          grandchildren.push({
+            id: gc.id,
+            key: gc.key,
+            summary: gc.fields.summary,
+            description: gc.fields.description,
+            status: gc.fields.status?.name,
+            issueType: gc.fields.issuetype?.name,
+            created: gc.fields.created,
+            startDate: gcDates.startDate,
+            endDate: gcDates.endDate,
+            dependencies: extractDependencies(gcLinks),
+            children: [], // Stop at grandchildren
+          });
+        }
 
         children.push({
           id: child.id,
@@ -154,21 +226,8 @@ export default async function handler(request) {
           created: child.fields.created,
           startDate: childDates.startDate,
           endDate: childDates.endDate,
-          children: grandchildIssues.map(gc => {
-            const gcDates = extractDates(gc.fields);
-            return {
-              id: gc.id,
-              key: gc.key,
-              summary: gc.fields.summary,
-              description: gc.fields.description,
-              status: gc.fields.status?.name,
-              issueType: gc.fields.issuetype?.name,
-              created: gc.fields.created,
-              startDate: gcDates.startDate,
-              endDate: gcDates.endDate,
-              children: [], // Stop at grandchildren
-            };
-          }),
+          dependencies: extractDependencies(childLinks),
+          children: grandchildren,
         });
 
         await delay(100); // Rate limit protection
@@ -179,6 +238,9 @@ export default async function handler(request) {
         endDate: endDateField ? epic.fields[endDateField] : epic.fields.duedate
       };
 
+      // Fetch issue links for epic
+      const epicLinks = await fetchIssueLinks(accessToken, baseUrl, epic.key);
+
       epicsWithFullHierarchy.push({
         id: epic.id,
         key: epic.key,
@@ -188,6 +250,7 @@ export default async function handler(request) {
         created: epic.fields.created,
         startDate: epicDates.startDate,
         endDate: epicDates.endDate,
+        dependencies: extractDependencies(epicLinks),
         children,
       });
     }
