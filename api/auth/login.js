@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 import {
   generateCodeVerifier,
   generateCodeChallenge,
@@ -12,15 +14,18 @@ const ATLASSIAN_AUTH_URL = 'https://auth.atlassian.com/authorize';
  */
 export default async function handler(request) {
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
-  const redirectUri = process.env.ATLASSIAN_REDIRECT_URI;
   const scopes = process.env.ATLASSIAN_SCOPES || 'read:jira-work offline_access';
 
-  if (!clientId || !redirectUri) {
+  if (!clientId) {
     return new Response(JSON.stringify({ error: 'OAuth not configured' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  // Derive redirect URI from request
+  const url = new URL(request.url);
+  const redirectUri = `${url.origin}/api/auth/callback`;
 
   // Generate PKCE values
   const codeVerifier = generateCodeVerifier();

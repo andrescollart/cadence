@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 import { getAccessToken, unauthorizedResponse, jsonResponse } from './_auth.js';
 
 /**

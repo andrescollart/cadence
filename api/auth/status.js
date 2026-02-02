@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 const ATLASSIAN_USER_URL = 'https://api.atlassian.com/me';
 
 /**

@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 
 /**

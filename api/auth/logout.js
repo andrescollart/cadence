@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 /**
  * Clears all authentication cookies
  */

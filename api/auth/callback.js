@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 
 /**
@@ -68,7 +70,9 @@ export default async function handler(request) {
   // Exchange code for tokens
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
   const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
-  const redirectUri = process.env.ATLASSIAN_REDIRECT_URI;
+
+  // Derive redirect URI from request (must match what was used in login)
+  const redirectUri = `${url.origin}/api/auth/callback`;
 
   try {
     const tokenResponse = await fetch(ATLASSIAN_TOKEN_URL, {
